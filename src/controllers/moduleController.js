@@ -2,6 +2,7 @@
 
 const db     = require('../config/db');
 const logger = require('../config/logger');
+const flowQ  = require('../utils/approvalFlowQueries');
 
 function safe(s) { return String(s||'').replace(/'/g,"''"); }
 function num(n)  { return String(parseInt(n,10)||0); }
@@ -28,13 +29,23 @@ async function getAll(req, res, next) {
         "WHERE pg.module_id="+mid+" ORDER BY pg.phase_code", {}
       );
 
-      // Approval flows per phase
-      const flows = await db.query(
-        "SELECT af.phase_code,af.level_order,af.approver_user_id,af.auto_approve,u.full_name AS approver_name "+
-        "FROM crms_approval_flows af "+
-        "JOIN crms_users u ON u.user_id=af.approver_user_id "+
-        "WHERE af.module_id="+mid+" ORDER BY af.phase_code,af.level_order", {}
-      );
+      // Approval flows per phase (one row per approver via mapping table)
+      const flowPhases = await db.query(
+        "SELECT DISTINCT phase_code FROM crms_approval_flows WHERE module_id="+mid+" ORDER BY phase_code", {}
+      ).catch(function() { return []; });
+      const flows = [];
+      for (const fp of flowPhases) {
+        const phaseRows = await flowQ.queryPhaseApprovers(mid, fp.PHASE_CODE);
+        phaseRows.forEach(function(r) {
+          flows.push({
+            PHASE_CODE: fp.PHASE_CODE,
+            LEVEL_ORDER: r.LEVEL_ORDER,
+            APPROVER_USER_ID: r.APPROVER_USER_ID,
+            AUTO_APPROVE: r.AUTO_APPROVE,
+            APPROVER_NAME: r.FULL_NAME,
+          });
+        });
+      }
 
       // Templates (RD only)
       const templates = await db.query(
@@ -235,19 +246,76 @@ async function setApprovalFlow(req, res, next) {
 }
 
 async function saveLevels(mid, phaseCode, levels) {
-  await db.executeWithCommit(
-    "DELETE FROM crms_approval_flows WHERE module_id="+mid+" AND phase_code='"+phaseCode+"'", {}
-  );
+  const levelMap = {};
   for (let i = 0; i < levels.length; i++) {
     const lvl = levels[i];
+    const levelOrd = Number(lvl.levelOrder) || (i + 1);
+    if (!levelMap[levelOrd]) levelMap[levelOrd] = { userIds: [], autoApprove: false };
     const uid = num(lvl.approverUserId || lvl.userId);
-    if (!uid || uid === '0') continue;
-    // Use levelOrder from the payload (allows multiple users at same level)
-    const levelOrd = Number(lvl.levelOrder) || (i+1);
+    if (uid && uid !== '0' && !levelMap[levelOrd].userIds.includes(uid)) {
+      levelMap[levelOrd].userIds.push(uid);
+    }
+    if (lvl.autoApprove) levelMap[levelOrd].autoApprove = true;
+  }
+
+  // Try to delete using phase_code first (new schema)
+  try {
     await db.executeWithCommit(
-      "INSERT INTO crms_approval_flows(module_id,phase_code,level_order,approver_user_id,auto_approve) "+
-      "VALUES("+mid+",'"+phaseCode+"',"+levelOrd+","+uid+","+(lvl.autoApprove?1:0)+")", {}
+      "DELETE FROM crms_approval_flow_approvers WHERE flow_id IN (SELECT flow_id FROM crms_approval_flows WHERE module_id="+mid+" AND phase_code='"+phaseCode+"')", {}
     );
+    await db.executeWithCommit(
+      "DELETE FROM crms_approval_flows WHERE module_id="+mid+" AND phase_code='"+phaseCode+"'", {}
+    );
+  } catch (e) {
+    // If phase_code doesn't exist, try flow_type (old schema)
+    // Map phase_code to flow_type: 'RD'->'RD', 'FSD'->'FSD', 'DRAFT'->'RD', 'DEPLOYMENT'->'FSD'
+    const flowType = (phaseCode === 'RD' || phaseCode === 'DRAFT') ? 'RD' : 'FSD';
+    await db.executeWithCommit(
+      "DELETE FROM crms_approval_flow_approvers WHERE flow_id IN (SELECT flow_id FROM crms_approval_flows WHERE module_id="+mid+" AND flow_type='"+flowType+"')", {}
+    );
+    await db.executeWithCommit(
+      "DELETE FROM crms_approval_flows WHERE module_id="+mid+" AND flow_type='"+flowType+"'", {}
+    );
+  }
+
+  const sortedLevels = Object.keys(levelMap).map(Number).sort(function(a, b) { return a - b; });
+  for (const levelOrd of sortedLevels) {
+    const entry = levelMap[levelOrd];
+    const userIds = entry.userIds;
+    const primaryUid = userIds[0] || '0';
+    
+    // Try to insert using phase_code first (new schema)
+    let flowId;
+    try {
+      await db.executeWithCommit(
+        "INSERT INTO crms_approval_flows(module_id,phase_code,level_order,approver_user_id,auto_approve) "+
+        "VALUES("+mid+",'"+phaseCode+"',"+levelOrd+","+primaryUid+","+(entry.autoApprove ? 1 : 0)+")", {}
+      );
+      const flowRow = await db.queryOne(
+        "SELECT flow_id FROM crms_approval_flows WHERE module_id="+mid+
+        " AND phase_code='"+phaseCode+"' AND level_order="+levelOrd, {}
+      );
+      flowId = flowRow ? num(flowRow.FLOW_ID) : null;
+    } catch (e) {
+      // If phase_code doesn't exist, try flow_type (old schema)
+      const flowType = (phaseCode === 'RD' || phaseCode === 'DRAFT') ? 'RD' : 'FSD';
+      await db.executeWithCommit(
+        "INSERT INTO crms_approval_flows(module_id,flow_type,level_order,approver_user_id,auto_approve) "+
+        "VALUES("+mid+",'"+flowType+"',"+levelOrd+","+primaryUid+","+(entry.autoApprove ? 1 : 0)+")", {}
+      );
+      const flowRow = await db.queryOne(
+        "SELECT flow_id FROM crms_approval_flows WHERE module_id="+mid+
+        " AND flow_type='"+flowType+"' AND level_order="+levelOrd, {}
+      );
+      flowId = flowRow ? num(flowRow.FLOW_ID) : null;
+    }
+    
+    if (!flowId || !userIds.length) continue;
+    for (const uid of userIds) {
+      await db.executeWithCommit(
+        "INSERT INTO crms_approval_flow_approvers(flow_id,approver_user_id) VALUES("+flowId+","+uid+")", {}
+      ).catch(function() {});
+    }
   }
 }
 

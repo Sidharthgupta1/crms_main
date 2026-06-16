@@ -2772,7 +2772,7 @@ async function _doCreateImpl() {
   if (!result) return;
 
   closeModal('create-modal');
-  showSuccessPopup(result.releaseNumber);
+  showSuccessPopup(result.releaseNumber, result.releaseId);
   renderDashboard();
   renderMyReleases();
 }
@@ -2781,10 +2781,14 @@ async function _doCreateImpl() {
 // CR DETAIL MODAL
 // ══════════════════════════════════════════════════════════════════════
 async function openDetail(releaseId) {
+  if (!releaseId) { toast('Release not found', true); return; }
   activeDetailId = releaseId;
   const r = await GET(`/releases/${releaseId}`);
-  if (!r) return;
-
+  if (!r) {
+    toast('Could not load release details — the server returned an error', true);
+    return;
+  }
+  try {
   document.getElementById('dm-number').textContent      = r.releaseNumber;
   document.getElementById('dm-state-badge').innerHTML   = stateBadge(r.state);
   renderPhaseBar(r.state);
@@ -2794,7 +2798,7 @@ async function openDetail(releaseId) {
   var holdBtn    = document.getElementById('dm-hold-btn');
   var unholdBtn  = document.getElementById('dm-unhold-btn');
   var sbBtn      = document.getElementById('dm-sendback-btn');
-  var isAwaiting = r.state && r.state.includes('Awaiting');
+  var isAwaiting = r.state && (r.state.toLowerCase().includes('awaiting') || r.state.includes('Approval L'));
   var isTerminal = r.state === 'Closed' || r.state === 'Cancelled';
   var isOnHold   = r.state === 'On Hold';
   if (holdBtn)   holdBtn.style.display  = (!isOnHold && !isTerminal && !isAwaiting) ? '' : 'none';
@@ -2804,20 +2808,22 @@ async function openDetail(releaseId) {
     sbBtn.style.display = (backTarget && !isTerminal) ? '' : 'none';
     if (backTarget) sbBtn.textContent = '\u21a9 Send Back to ' + backTarget;
   }
-  if (isAwaiting || isTerminal) {
-    btn.style.display = 'none';
-  } else {
-    btn.style.display = '';
-    btn.disabled = false;
-    if (r.state === 'On Hold') {
-      btn.textContent = 'Resume →';
-    } else if (APPROVAL_STATES.indexOf(r.state) >= 0) {
-      btn.textContent = 'Submit for Approval →';
-    } else if (NEXT_STATE[r.state]) {
-      btn.textContent = 'Advance to ' + NEXT_STATE[r.state] + ' →';
+  if (btn) {
+    if (isAwaiting || isTerminal) {
+      btn.style.display = 'none';
     } else {
-      btn.textContent = 'Final State';
-      btn.disabled = true;
+      btn.style.display = '';
+      btn.disabled = false;
+      if (r.state === 'On Hold') {
+        btn.textContent = 'Resume →';
+      } else if (APPROVAL_STATES.indexOf(r.state) >= 0) {
+        btn.textContent = 'Submit for Approval →';
+      } else if (NEXT_STATE[r.state]) {
+        btn.textContent = 'Advance to ' + NEXT_STATE[r.state] + ' →';
+      } else {
+        btn.textContent = 'Final State';
+        btn.disabled = true;
+      }
     }
   }
 
@@ -2844,9 +2850,13 @@ async function openDetail(releaseId) {
   // Show current pending approver
   var pendingApprEl = document.getElementById('dv-pending-approver');
   if (pendingApprEl) {
-    var isAwaiting = r.state && r.state.toLowerCase().includes('awaiting');
+    var isAwaiting = r.state && (r.state.toLowerCase().includes('awaiting') || r.state.includes('Approval L'));
     var trail      = r.approvalTrail || [];
-    var pending    = trail.find(function(a){ return a.status==='Pending'; });
+    var curLvl     = Number(r.currentApprovalLevel) || 0;
+    var pending    = trail.find(function(a) {
+      return String(a.status || '').toLowerCase() === 'pending' &&
+        (!curLvl || Number(a.levelOrder) === curLvl);
+    }) || trail.find(function(a){ return String(a.status || '').toLowerCase() === 'pending'; });
     if (isAwaiting && pending) {
       var lvl = pending.levelOrder || pending.level || 1;
       pendingApprEl.innerHTML =
@@ -2910,6 +2920,10 @@ async function openDetail(releaseId) {
   if (reviewerSel2)  { reviewerSel2.innerHTML = '<option value="">— Select Reviewer —</option>'; }
   renderApprovalActions(r);
   openModal('detail-modal');
+  } catch (e) {
+    console.error('openDetail error:', e);
+    toast('Error opening release: ' + (e.message || 'unknown error'), true);
+  }
 }
 
 function renderPhaseBar(cur) {
@@ -3041,6 +3055,7 @@ async function _doAdvanceState(force, confirmed) {
 
 function renderHistory(history) {
   const list = document.getElementById('history-list');
+  if (!list) return;
   list.innerHTML = history.length
     ? history.map(h => `<div class="audit-item"><div class="audit-dot"></div><div class="audit-content">
         <div class="audit-action">${h.action}${h.fromState?' — '+h.fromState+' → '+h.toState:''}</div>
@@ -3192,6 +3207,7 @@ async function saveTask() {
 async function renderComments() {
   const comments = await GET(`/releases/${activeDetailId}/comments`);
   const list = document.getElementById('comment-list');
+  if (!list) return;
   list.innerHTML = comments?.length
     ? comments.map(c => `<div class="comment-item">
         <div><span class="comment-author">${c.author}</span><span class="comment-time">${new Date(c.createdAt).toLocaleString('en-IN')}</span></div>
@@ -4471,7 +4487,7 @@ async function saveCrOwner() {
 // ══════════════════════════════════════════════════════════════════════
 
 // ── Success popup (shown after CR creation) ───────────────────────────
-function showSuccessPopup(releaseNumber) {
+function showSuccessPopup(releaseNumber, releaseId) {
   // Remove any existing popup
   var old = document.getElementById('crms-success-popup');
   if (old) old.remove();
@@ -4502,10 +4518,10 @@ function showSuccessPopup(releaseNumber) {
       '</div>' +
       '<div style="font-size:14px;color:#666;margin-bottom:28px">Your CR is now in <strong>RD Phase</strong> and ready for processing.</div>' +
       '<div style="display:flex;gap:10px;justify-content:center">' +
-        '<button onclick="document.getElementById(\'crms-success-popup\').remove();openDetail(null)" ' +
-        'style="background:#f5f5f5;color:#333;border:none;padding:10px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">Close</button>' +
+        '<button onclick="document.getElementById(\'crms-success-popup\').remove();openDetail(' + (releaseId || 'null') + ')" ' +
+        'style="background:#C8102E;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">View CR</button>' +
         '<button onclick="document.getElementById(\'crms-success-popup\').remove()" ' +
-        'style="background:#C8102E;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">OK</button>' +
+        'style="background:#f5f5f5;color:#333;border:none;padding:10px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">Close</button>' +
       '</div>' +
     '</div>';
 
@@ -5376,7 +5392,10 @@ function showConfirmModal(title,bodyHtml,confirmLabel,confirmColor,onConfirm){
   var s=document.getElementById('input-modal-save');
   s.textContent=confirmLabel||'Confirm';
   s.style.cssText='background:'+(confirmColor||'var(--red)')+';color:#fff;border:none;padding:9px 20px;border-radius:var(--radius);cursor:pointer;font-weight:600;font-size:14px;font-family:var(--font)';
-  s.onclick=async function(){closeModal('input-modal');if(onConfirm)await onConfirm();};
+  s.onclick=async function(){
+    if(onConfirm){var keepOpen=await onConfirm();if(keepOpen===false)return;}
+    closeModal('input-modal');
+  };
   openModal('input-modal');
   setTimeout(function(){var ta=document.getElementById('task-delay-reason');if(ta){s.disabled=true;s.style.opacity='0.45';s.style.cursor='not-allowed';ta.focus();}else{s.disabled=false;s.style.opacity='1';s.style.cursor='pointer';}},50);
 }
@@ -6864,7 +6883,7 @@ function renderApprovalActions(release) {
 
   // ── Awaiting approval banner ──────────────────────────────────────
   if (state.includes('Awaiting') || state.includes('Approval L')) {
-    buildApprovalBanner(container, state, trail, release.releaseId);
+    buildApprovalBanner(container, state, trail, release);
     return;
   }
 
@@ -6912,7 +6931,7 @@ function renderApprovalActions(release) {
     var curPhaseCode = PHASE_CODE_FROM_STATE[state];
     if (curPhaseCode) {
       var filtered = trail.filter(function(a) { return a.phaseCode === curPhaseCode; });
-      if (filtered.length) buildApprovalBanner(container, state, filtered, release.releaseId);
+      if (filtered.length) buildApprovalBanner(container, state, filtered, release);
     }
   }
 }
@@ -6968,7 +6987,8 @@ async function sendForReview() {
 // ═══════════════════════════════════════════════════════════════════════
 // APPROVAL BANNER — shown when CR is in Awaiting Approval state
 // ═══════════════════════════════════════════════════════════════════════
-function buildApprovalBanner(container, state, trail, releaseId) {
+function buildApprovalBanner(container, state, trail, release) {
+  var releaseId = release && (release.releaseId || release.id);
   // Determine phase from state string
   var phaseCode = '';
   if (state.includes('Draft Awaiting'))       phaseCode = 'DRAFT';
@@ -6976,24 +6996,29 @@ function buildApprovalBanner(container, state, trail, releaseId) {
   else if (state.includes('FSD Awaiting'))    phaseCode = 'FSD';
   else if (state.includes('Deployment'))      phaseCode = 'DEPLOYMENT';
 
-  // Filter trail for this phase
+  // Filter trail for this phase (case-insensitive phase match)
   var relevant = trail.filter(function(a) {
-    return a.phaseCode === phaseCode || a.flowType === phaseCode;
+    var pc = String(a.phaseCode || a.flowType || '').toUpperCase();
+    return pc === phaseCode || (!pc && phaseCode);
   });
 
-  // Current level from state e.g. "RD Awaiting Approval L2" → 2
-  var lvlMatch = state.match(/L(\d+)$/);
-  var curLevel = lvlMatch ? parseInt(lvlMatch[1]) : 1;
+  // Current level — prefer server value, fall back to state string
+  var curLevel = release && Number(release.currentApprovalLevel);
+  if (!curLevel) {
+    var lvlMatch = state.match(/L(\d+)$/);
+    curLevel = lvlMatch ? parseInt(lvlMatch[1], 10) : 1;
+  }
 
   var myUid   = currentUser && String(currentUser.userId);
   var isAdmin = currentUser && currentUser.role === 'admin';
   var myApproval = relevant.find(function(a) {
-    var sameLevel = a.levelOrder === curLevel;
-    var byId   = myUid && String(a.approverUserId||'') === myUid;
+    var sameLevel = Number(a.levelOrder) === Number(curLevel);
+    var byId   = myUid && String(a.approverUserId || '') === myUid;
     var byName = currentUser && a.approverName === currentUser.fullName;
     return sameLevel && (byId || byName);
   });
-  var isPendingMine = myApproval && myApproval.status === 'Pending';
+  var isPendingMine = !!(release && release.canApprove) ||
+    (myApproval && String(myApproval.status || '').toLowerCase() === 'pending');
 
   // Banner wrapper
   var wrap = document.createElement('div');
@@ -7010,7 +7035,7 @@ function buildApprovalBanner(container, state, trail, releaseId) {
   body.style.cssText = 'padding:10px 14px;background:#fffbeb';
   var trailHtml = relevant.map(function(a) {
     var icon = a.status === 'Approved' ? '✅' : a.status === 'Rejected' ? '❌' : '⏳';
-    var isCur = a.levelOrder === curLevel;
+    var isCur = Number(a.levelOrder) === Number(curLevel);
     return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;'+
            (isCur?'font-weight:700;color:#92400e':'color:#64748b')+'">'+
            '<span>'+icon+'</span>'+
@@ -7204,9 +7229,12 @@ function renderTaskDetailPanel(task, panel) {
   var isAdmin  = currentUser && currentUser.role === 'admin';
   var myUid    = currentUser && String(currentUser.userId);
   var isMine   = String(task.assignedToId) === myUid;
+  var rel      = _currentRelease || {};
+  var isCrOwner    = rel.requestedByUserId && String(rel.requestedByUserId) === myUid;
+  var isCrAssignee = rel.assignedToUserId && String(rel.assignedToUserId) === myUid;
   var isClosed = task.state === 'Closed';
-  var canAct   = isAdmin || isMine;
-  var canEdit  = canAct && !isClosed;   // editable: not closed + assigned/admin
+  var canAct   = isAdmin || isMine || isCrOwner || isCrAssignee;
+  var canEdit  = canAct && !isClosed;
 
   var PRIO_OPTS = ['','1 - Critical','2 - High','3 - Moderate','4 - Low'];
   var prioLabel = task.priority ? (PRIO_OPTS[parseInt(task.priority)] || task.priority) : '—';
@@ -7448,8 +7476,9 @@ function renderTaskDetailPanel(task, panel) {
   html += '</div>';
   panel.innerHTML = html;
 
-  // Store task ID for save
+  // Store task ID and original end date for change-detection on save
   panel.dataset.taskId = task.taskId;
+  panel.dataset.origEnd = task.plannedEndDate ? String(task.plannedEndDate).slice(0, 10) : '';
 }
 
 
@@ -7789,13 +7818,12 @@ async function saveTaskEdits(taskId){
   if(endChanged){
     var mb='<p style="font-size:13px;color:var(--grey-700);margin-bottom:12px">Changing Planned End Date from <strong>'+fmtDate(origEnd)+'</strong> to <strong>'+fmtDate(end)+'</strong>. Please enter a reason.</p>'+
       '<div class="form-field"><label style="font-size:11px;font-weight:700;color:var(--grey-600);text-transform:uppercase;letter-spacing:.4px">Delay / Change Reason <span style="color:var(--red)">*</span></label>'+
-      '<textarea id="task-delay-reason" rows="3" '+
-      'oninput="onDelayReasonInput(this)" \'+'
+      '<textarea id="task-delay-reason" rows="3" oninput="onDelayReasonInput(this)" '+
       'style="width:100%;padding:8px 10px;border:1.5px solid var(--grey-200);border-radius:var(--radius);font-family:var(--font);font-size:13px;resize:vertical;box-sizing:border-box;margin-top:5px" '+
       'placeholder="e.g. Resource unavailable, requirement changed..."></textarea></div>';
     showConfirmModal('Date Change - Reason Required',mb,'Save with Reason','#d97706',async function(){
       var reason=((document.getElementById('task-delay-reason')||{}).value||'').trim();
-      if(!reason){toast('Delay reason is required',true);return;}
+      if(!reason){toast('Delay reason is required',true);return false;}
       await _doSaveTaskEdits(taskId,agId,atId,start||null,end,actStart||null,actualEnd||null,reason);
     });
     return;
@@ -7806,12 +7834,21 @@ async function saveTaskEdits(taskId){
 async function _doSaveTaskEdits(taskId,agId,atId,start,end,actStart,actualEnd,delayReason){
   var msgEl=document.getElementById('te-save-msg');
   var btn=document.querySelector('[onclick="saveTaskEdits('+taskId+')"]');
+  var startEl=document.getElementById('te-start');
+  var actStartEl=document.getElementById('te-actual-start');
   if(btn){btn.disabled=true;btn.textContent='Saving...';}
   if(msgEl){msgEl.textContent='Saving...';msgEl.style.color='var(--grey-400)';}
-  var payload={assignmentGroupId:parseInt(agId),assignedToUserId:parseInt(atId),plannedEndDate:end||null,actualCompletionDate:actualEnd||null};
-  if(start)payload.plannedStartDate=start;
-  if(actStart)payload.actualStartDate=actStart;
-  if(delayReason)payload.delayReason=delayReason;
+  var payload={
+    assignmentGroupId: parseInt(agId, 10),
+    assignedToUserId:  parseInt(atId, 10),
+    plannedEndDate:    end || null,
+    actualCompletionDate: actualEnd || null,
+  };
+  if (start) payload.plannedStartDate = start;
+  else if (startEl && startEl.value) payload.plannedStartDate = startEl.value;
+  if (actStart) payload.actualStartDate = actStart;
+  else if (actStartEl && actStartEl.value) payload.actualStartDate = actStartEl.value;
+  if (delayReason) payload.delayReason = delayReason;
   var ok=false;
   try{
     var fr=await fetch(API_BASE+'/releases/'+activeDetailId+'/phase-tasks/'+taskId,{

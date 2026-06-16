@@ -269,110 +269,47 @@ const loginValidation = [
 
 async function login(req, res, next) {
   try {
-    const username = safe((req.body.username || req.body.initials || '').toUpperCase());
+    const username = (req.body.username || req.body.initials || '').toUpperCase();
     const password = req.body.password || '';
 
-    // ── Step 1: Confirm username exists in FND_USER ────────────────
-    let fndRow = null;
-    try {
-      fndRow = await db.queryOne(
-        "SELECT user_id, user_name, description, email_address " +
-        "FROM fnd_user " +
-        "WHERE UPPER(user_name)='" + username + "' " +
-        "AND NVL(end_date, SYSDATE+1) > SYSDATE AND ROWNUM=1", {}
-      );
-    } catch(e) {
-      // FND_USER not accessible → standalone/dev mode, skip FND check
-      logger.warn('FND_USER lookup skipped (standalone mode): ' + e.message);
-      fndRow = { USER_NAME: username, USER_ID: null, DESCRIPTION: username, EMAIL_ADDRESS: null };
-    }
-
-    if (!fndRow) {
-      return res.status(401).json({
-        error: '"' + username + '" is not a valid Oracle EBS username. ' +
-               'Please use the same username you use to login to Oracle EBS.',
-      });
-    }
-
-    // ── Step 2: Validate password via FND_WEB_SEC.VALIDATE_LOGIN ───
-    //
-    // This is the key change from the previous version:
-    // Instead of comparing against crms_users.password_hash (bcrypt),
-    // we call Oracle's own authentication function.
-    // The password is sent over the encrypted Oracle DB connection (NNE).
-    //
-    const oracleAuth = await validateOracleCredentials(username, password);
-
-    if (!oracleAuth.valid) {
-      if (oracleAuth.reason === 'oracle_api_unavailable') {
-        // ── FALLBACK: Oracle API not accessible → use bcrypt ──────
-        // This happens in dev/standalone mode when APPS doesn't have
-        // EXECUTE privilege on FND_WEB_SEC.
-        // In production, grant: GRANT EXECUTE ON FND_WEB_SEC TO APPS;
-        logger.warn('Using bcrypt fallback for: ' + username);
-
-        const { crmsUser: fallbackUser, isNew: fallbackNew } =
-          await findOrProvisionUser(username, fndRow);
-
-        if (!fallbackUser || !fallbackUser.IS_ACTIVE) {
-          return res.status(401).json({ error: 'Invalid credentials.' });
-        }
-
-        // Check if dummy hash (auto-provisioned, never had a real password)
-        const isDummy = (fallbackUser.PASSWORD_HASH || '').startsWith('$2b$12$invalidhash');
-        let bcryptMatch = false;
-        if (!isDummy) {
-          bcryptMatch = await bcrypt.compare(password, fallbackUser.PASSWORD_HASH);
-        } else {
-          // Auto-provisioned user, no bcrypt hash — check default pass123
-          bcryptMatch = (password === 'pass123');
-        }
-
-        if (!bcryptMatch) {
-          return res.status(401).json({ error: 'Invalid credentials.' });
-        }
-
-        return await issueTokens(res, fallbackUser, fallbackNew);
-
-      } else if (oracleAuth.reason === 'account_locked') {
-        return res.status(403).json({
-          error: oracleAuth.message || 'Your Oracle account is locked. Contact your Oracle administrator.',
-        });
-      } else {
-        // Invalid credentials from Oracle
-        return res.status(401).json({
-          error: 'Invalid Oracle credentials. Please use your Oracle EBS username and password.',
-        });
-      }
-    }
-
-    // ── Oracle confirmed credentials are valid ─────────────────────
-    // Step 3: Find or auto-provision CRMS account
-    const { crmsUser, isNew } = await findOrProvisionUser(username, fndRow);
+    const crmsUser = await db.queryOne(
+      "SELECT user_id, initials, full_name, role, password_hash, is_active " +
+      "FROM crms_users " +
+      "WHERE UPPER(initials)='" + safe(username) + "' " +
+      "AND ROWNUM=1",
+      {}
+    );
 
     if (!crmsUser) {
-      return res.status(500).json({ error: 'Failed to provision user account. Contact administrator.' });
-    }
-    if (!crmsUser.IS_ACTIVE) {
-      return res.status(403).json({
-        error: 'Your CRMS account has been deactivated. Contact your CRMS administrator.',
+      return res.status(401).json({
+        error: 'Invalid credentials.'
       });
     }
 
-    // Step 4: Issue JWT tokens
-    return await issueTokens(res, crmsUser, isNew);
+    if (!crmsUser.IS_ACTIVE) {
+      return res.status(403).json({
+        error: 'Your account has been deactivated.'
+      });
+    }
 
-  } catch(err) { next(err); }
+    const passwordMatch = await bcrypt.compare(
+      password,
+      crmsUser.PASSWORD_HASH
+    );
+
+    if (!passwordMatch) {
+      return res.status(401).json({
+        error: 'Invalid credentials.'
+      });
+    }
+
+    return await issueTokens(res, crmsUser, false);
+
+  } catch (err) {
+    next(err);
+  }
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// issueTokens()
-//
-// FILE:    src/controllers/authController.js
-// PURPOSE: Common token-issuing logic used by both Oracle auth path
-//          and bcrypt fallback path. Logs the login, updates last_login,
-//          and returns JWT tokens to the frontend.
-// ─────────────────────────────────────────────────────────────────────
 async function issueTokens(res, crmsUser, isNew) {
   const userId = num(crmsUser.USER_ID);
 
