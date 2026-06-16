@@ -12,6 +12,7 @@ function getApprCtrl() {
 const { body } = require('express-validator');
 const db       = require('../config/db');
 const logger   = require('../config/logger');
+const flowQ    = require('../utils/approvalFlowQueries');
 const { validate } = require('../middleware/validate');
 
 function safe(s) { return String(s||'').replace(/'/g,"''"); }
@@ -58,6 +59,219 @@ function phaseToState(code) {
 function phaseLabel(code) {
   const m = { RD:'RD Task',FSD:'FSD Task',DEV:'Development Task',TESTING:'Testing Task',UAT:'UAT Task',DEPLOYMENT:'Deployment Task' };
   return m[code] || code+' Task';
+}
+
+let _releaseTaskColumns = null;
+let _releaseTaskSchemaEnsured = false;
+
+async function ensureReleaseTaskSchema() {
+  if (_releaseTaskSchemaEnsured) return;
+  _releaseTaskSchemaEnsured = true;
+  const alters = [
+    ['PLANNED_START_DATE', 'DATE'],
+    ['PLANNED_END_DATE', 'DATE'],
+    ['ACTUAL_START_DATE', 'DATE'],
+    ['ACTUAL_END_DATE', 'DATE'],
+    ['ASSIGNMENT_GROUP_ID', 'NUMBER'],
+    ['PRIORITY', 'VARCHAR2(1)'],
+    ['DESCRIPTION', 'CLOB'],
+    ['REASON_FOR_REJECT', 'VARCHAR2(500)'],
+    ['DELAY_REASON', 'VARCHAR2(2000)'],
+    ['CEMLI', 'VARCHAR2(200)'],
+    ['SMARTSHEET_ID', 'VARCHAR2(200)'],
+    ['PROCESS_NAME', 'VARCHAR2(500)'],
+  ];
+  for (var i = 0; i < alters.length; i++) {
+    var col = alters[i][0];
+    var typ = alters[i][1];
+    try {
+      await db.executeWithCommit('ALTER TABLE crms_release_tasks ADD ' + col + ' ' + typ, {});
+      logger.info('Added crms_release_tasks.' + col);
+      _releaseTaskColumns = null;
+    } catch (err) {
+      var msg = String(err.message || '');
+      if (msg.indexOf('ORA-01430') === -1 && msg.indexOf('ORA-01442') === -1) {
+        logger.warn('Could not add crms_release_tasks.' + col, { err: msg.split('\n')[0] });
+      }
+    }
+  }
+}
+
+async function getReleaseTaskColumns() {
+  await ensureReleaseTaskSchema();
+  if (_releaseTaskColumns) return _releaseTaskColumns;
+  try {
+    const rows = await db.query(
+      "SELECT column_name FROM user_tab_columns WHERE table_name='CRMS_RELEASE_TASKS'", {}
+    );
+    _releaseTaskColumns = new Set(rows.map(function(r) { return r.COLUMN_NAME; }));
+  } catch (err) {
+    logger.warn('Could not introspect crms_release_tasks columns — using base set', { err: err.message });
+    _releaseTaskColumns = new Set([
+      'TASK_ID', 'TASK_NUMBER', 'PHASE_CODE', 'STATE', 'SHORT_DESCRIPTION',
+      'PRIORITY', 'DESCRIPTION', 'TEMPLATE_DOWNLOADED', 'UPLOAD_ATTACHMENT_ID',
+      'PLANNED_START_DATE', 'PLANNED_END_DATE', 'ACTUAL_START_DATE', 'ACTUAL_END_DATE',
+      'REASON_FOR_REJECT', 'CLOSED_AT', 'CREATED_AT', 'DELAY_REASON',
+      'CEMLI', 'SMARTSHEET_ID', 'PROCESS_NAME', 'ASSIGNMENT_GROUP_ID', 'ASSIGNED_TO', 'RELEASE_ID',
+    ]);
+  }
+  return _releaseTaskColumns;
+}
+
+function hasReleaseTaskColumn(cols, name) {
+  return cols.has(name);
+}
+
+function fmtTaskDate(d) {
+  if (!d) return null;
+  if (d instanceof Date) return d.toISOString().slice(0, 10);
+  return String(d).slice(0, 10);
+}
+
+function mapPhaseTaskRow(t) {
+  return {
+    taskId: t.TASK_ID, taskNumber: t.TASK_NUMBER, phaseCode: t.PHASE_CODE,
+    taskType: phaseLabel(t.PHASE_CODE), state: t.STATE,
+    shortDescription: t.SHORT_DESCRIPTION, priority: t.PRIORITY,
+    description: t.DESCRIPTION, templateDownloaded: !!t.TEMPLATE_DOWNLOADED,
+    uploadAttachmentId: t.UPLOAD_ATTACHMENT_ID,
+    plannedStartDate: fmtTaskDate(t.PLANNED_START_DATE),
+    plannedEndDate: fmtTaskDate(t.PLANNED_END_DATE),
+    actualStartDate: fmtTaskDate(t.ACTUAL_START_DATE),
+    actualEndDate: fmtTaskDate(t.ACTUAL_END_DATE),
+    reasonForReject: t.REASON_FOR_REJECT, delayReason: t.DELAY_REASON,
+    closedAt: t.CLOSED_AT, createdAt: t.CREATED_AT,
+    assignedTo: t.ASSIGNED_TO, assignedToId: t.ASSIGNED_TO_ID,
+    assignmentGroup: t.ASSIGNMENT_GROUP || '',
+    cemli: t.CEMLI || '', smartsheetId: t.SMARTSHEET_ID || '', processName: t.PROCESS_NAME || '',
+  };
+}
+
+// Query phase sub-tasks using only columns that exist in the current DB schema
+async function queryPhaseTasks(whereClause, options) {
+  options = options || {};
+  const includeGroup = options.includeGroup !== false;
+  const cols = await getReleaseTaskColumns();
+
+  const rtCols = [
+    ['rt.task_id', 'TASK_ID'],
+    ['rt.task_number', 'TASK_NUMBER'],
+    ['rt.phase_code', 'PHASE_CODE'],
+    ['rt.state', 'STATE'],
+    ['rt.short_description', 'SHORT_DESCRIPTION'],
+    ['rt.priority', 'PRIORITY'],
+    ['rt.description', 'DESCRIPTION'],
+    ['rt.template_downloaded', 'TEMPLATE_DOWNLOADED'],
+    ['rt.upload_attachment_id', 'UPLOAD_ATTACHMENT_ID'],
+    ['rt.planned_start_date', 'PLANNED_START_DATE'],
+    ['rt.planned_end_date', 'PLANNED_END_DATE'],
+    ['rt.actual_start_date', 'ACTUAL_START_DATE'],
+    ['rt.actual_end_date', 'ACTUAL_END_DATE'],
+    ['rt.reason_for_reject', 'REASON_FOR_REJECT'],
+    ['rt.closed_at', 'CLOSED_AT'],
+    ['rt.created_at', 'CREATED_AT'],
+    ['rt.delay_reason', 'DELAY_REASON'],
+    ['rt.cemli', 'CEMLI'],
+    ['rt.smartsheet_id', 'SMARTSHEET_ID'],
+    ['rt.process_name', 'PROCESS_NAME'],
+  ].filter(function(pair) { return hasReleaseTaskColumn(cols, pair[1]); })
+   .map(function(pair) { return pair[0]; });
+
+  const select = rtCols.join(',') + ',u.full_name AS assigned_to,u.user_id AS assigned_to_id' +
+    (includeGroup && hasReleaseTaskColumn(cols, 'ASSIGNMENT_GROUP_ID')
+      ? ',ag.group_name AS assignment_group' : '');
+  const from =
+    'FROM crms_release_tasks rt '+
+    'LEFT JOIN crms_users u ON u.user_id=rt.assigned_to ' +
+    (includeGroup && hasReleaseTaskColumn(cols, 'ASSIGNMENT_GROUP_ID')
+      ? 'LEFT JOIN crms_assignment_groups ag ON ag.group_id=rt.assignment_group_id '
+      : '');
+
+  return db.query('SELECT ' + select + ' ' + from + whereClause, {});
+}
+
+function addPhaseTaskInsertCol(names, values, cols, column, sqlValue, required) {
+  if (!hasReleaseTaskColumn(cols, column)) {
+    if (required) throw new Error('Required column ' + column + ' missing on crms_release_tasks');
+    return;
+  }
+  names.push(column.toLowerCase());
+  values.push(sqlValue);
+}
+
+async function insertPhaseTask(data) {
+  const cols = await getReleaseTaskColumns();
+  const names = [];
+  const values = [];
+
+  addPhaseTaskInsertCol(names, values, cols, 'TASK_NUMBER',       "'" + safe(data.taskNumber) + "'",       true);
+  addPhaseTaskInsertCol(names, values, cols, 'RELEASE_ID',        num(data.releaseId),                     true);
+  addPhaseTaskInsertCol(names, values, cols, 'PHASE_CODE',        "'" + safe(data.phaseCode) + "'",        true);
+  addPhaseTaskInsertCol(names, values, cols, 'SHORT_DESCRIPTION', "'" + safe(data.shortDescription) + "'", true);
+
+  if (data.assignmentGroupId) {
+    addPhaseTaskInsertCol(names, values, cols, 'ASSIGNMENT_GROUP_ID', num(data.assignmentGroupId));
+  }
+
+  const assignee = data.assignedToUserId || data.fallbackAssignee;
+  if (assignee) {
+    addPhaseTaskInsertCol(names, values, cols, 'ASSIGNED_TO', num(assignee));
+  } else if (hasReleaseTaskColumn(cols, 'ASSIGNED_TO') && data.fallbackAssignee) {
+    addPhaseTaskInsertCol(names, values, cols, 'ASSIGNED_TO', num(data.fallbackAssignee), true);
+  }
+
+  if (data.priority) {
+    addPhaseTaskInsertCol(names, values, cols, 'PRIORITY', "'" + safe(data.priority) + "'");
+  }
+  if (hasReleaseTaskColumn(cols, 'DESCRIPTION')) {
+    addPhaseTaskInsertCol(names, values, cols, 'DESCRIPTION', "'" + safe(data.description || '') + "'");
+  }
+  if (data.plannedStartDate) {
+    addPhaseTaskInsertCol(names, values, cols, 'PLANNED_START_DATE', safeDate(data.plannedStartDate));
+  }
+  if (data.plannedEndDate) {
+    addPhaseTaskInsertCol(names, values, cols, 'PLANNED_END_DATE', safeDate(data.plannedEndDate));
+  }
+  if (data.cemli) {
+    addPhaseTaskInsertCol(names, values, cols, 'CEMLI', "'" + safe(data.cemli) + "'");
+  }
+  if (data.smartsheetId) {
+    addPhaseTaskInsertCol(names, values, cols, 'SMARTSHEET_ID', "'" + safe(data.smartsheetId) + "'");
+  }
+  if (data.processName) {
+    addPhaseTaskInsertCol(names, values, cols, 'PROCESS_NAME', "'" + safe(data.processName) + "'");
+  }
+
+  await db.executeWithCommit(
+    'INSERT INTO crms_release_tasks(' + names.join(',') + ') VALUES(' + values.join(',') + ')',
+    {}
+  );
+}
+
+async function buildPhaseTaskUpdateParts(body) {
+  const cols = await getReleaseTaskColumns();
+  const setParts = [];
+  const skipped = [];
+  const fields = [
+    { key: 'assignmentGroupId',    column: 'ASSIGNMENT_GROUP_ID', fmt: function(v) { return num(v); } },
+    { key: 'assignedToUserId',     column: 'ASSIGNED_TO',         fmt: function(v) { return num(v); } },
+    { key: 'plannedStartDate',     column: 'PLANNED_START_DATE',  fmt: function(v) { return safeDate(v); } },
+    { key: 'plannedEndDate',       column: 'PLANNED_END_DATE',    fmt: function(v) { return safeDate(v); } },
+    { key: 'actualStartDate',      column: 'ACTUAL_START_DATE',   fmt: function(v) { return safeDate(v); } },
+    { key: 'actualCompletionDate', column: 'ACTUAL_END_DATE',     fmt: function(v) { return safeDate(v); } },
+    { key: 'delayReason',          column: 'DELAY_REASON',        fmt: function(v) { return "'" + safe(v) + "'"; } },
+  ];
+
+  fields.forEach(function(field) {
+    if (body[field.key] === undefined) return;
+    if (!hasReleaseTaskColumn(cols, field.column)) {
+      skipped.push(field.column.toLowerCase());
+      return;
+    }
+    setParts.push(field.column.toLowerCase() + '=' + field.fmt(body[field.key]));
+  });
+
+  return { setParts: setParts, skipped: skipped };
 }
 
 // ── GET /releases/next-number ─────────────────────────────────────────
@@ -259,6 +473,27 @@ async function getOne(req, res, next) {
     );
     if (!row) return res.status(404).json({ error:'Release not found' });
 
+    const curLevel = Number(row.CURRENT_APPROVAL_LEVEL||0);
+    let canApprove = false;
+    const viewerUid = req.user ? num(req.user.userId) : '0';
+    if (curLevel > 0 && row.STATE && (row.STATE.includes('Awaiting') || row.STATE.includes('Approval L'))) {
+      const apprCtrl = getApprCtrl();
+      const phaseCode = apprCtrl.stateToApprovalPhase
+        ? apprCtrl.stateToApprovalPhase(row.STATE)
+        : null;
+      if (phaseCode && row.MODULE_ID && apprCtrl.ensureLevelApprovalRecords) {
+        await apprCtrl.ensureLevelApprovalRecords(rid, num(String(row.MODULE_ID)), phaseCode, curLevel);
+        if (viewerUid !== '0') {
+          const mine = await db.queryOne(
+            "SELECT approval_id FROM crms_release_approvals "+
+            "WHERE release_id="+rid+" AND phase_code='"+phaseCode+"' AND level_order="+curLevel+
+            " AND approver_user_id="+viewerUid+" AND status='Pending'", {}
+          ).catch(function(){ return null; });
+          canApprove = !!mine || (req.user && req.user.role === 'admin');
+        }
+      }
+    }
+
     const hist = await db.query(
       'SELECT h.action,h.from_state,h.to_state,h.changed_at,u.full_name AS changed_by '+
       'FROM crms_release_history h JOIN crms_users u ON u.user_id=h.changed_by '+
@@ -270,20 +505,10 @@ async function getOne(req, res, next) {
       'FROM crms_release_approvals ra JOIN crms_users u ON u.user_id=ra.approver_user_id '+
       'WHERE ra.release_id='+rid+' ORDER BY ra.phase_code,ra.level_order', {}
     );
-    const phaseTasks = await db.query(
-      'SELECT rt.task_id,rt.task_number,rt.phase_code,rt.state,rt.short_description,'+
-      'rt.priority,rt.description,rt.template_downloaded,rt.upload_attachment_id,'+
-      'rt.planned_start_date,rt.planned_end_date,rt.actual_start_date,rt.actual_end_date,'+
-      'rt.reason_for_reject,rt.closed_at,rt.created_at,rt.delay_reason,'+
-      'rt.cemli,rt.smartsheet_id,rt.process_name,'+
-      'u.full_name AS assigned_to,u.user_id AS assigned_to_id,'+
-      'ag.group_name AS assignment_group '+
-      'FROM crms_release_tasks rt '+
-      'LEFT JOIN crms_users u ON u.user_id=rt.assigned_to '+
-      'LEFT JOIN crms_assignment_groups ag ON ag.group_id=rt.assignment_group_id '+
-      'WHERE rt.release_id='+rid+' ORDER BY rt.phase_code,rt.created_at', {}
+    const phaseTasks = await queryPhaseTasks(
+      'WHERE rt.release_id='+rid+' ORDER BY rt.phase_code,rt.created_at',
+      { includeGroup: true }
     );
-
     const grpId = row.ASSIGNMENT_GROUP_ID;
     let groupMembers = [];
     if (grpId) {
@@ -305,14 +530,17 @@ async function getOne(req, res, next) {
     const phaseCode = stateToPhaseCode(row.STATE);
     let phaseApprovers = [];
     if (phaseCode && row.MODULE_ID) {
-      phaseApprovers = await db.query(
-        'SELECT DISTINCT u.user_id,u.full_name '+
-        'FROM crms_approval_flows af '+
-        'JOIN crms_users u ON u.user_id=af.approver_user_id '+
-        'WHERE af.module_id='+num(String(row.MODULE_ID))+
-        " AND af.phase_code='"+phaseCode+"' AND (af.auto_approve IS NULL OR af.auto_approve=0)"+
-        ' ORDER BY u.full_name', {}
-      );
+      const phaseRows = await flowQ.queryPhaseApprovers(num(String(row.MODULE_ID)), phaseCode);
+      const seen = {};
+      phaseApprovers = phaseRows.filter(function(r) {
+        const id = num(r.APPROVER_USER_ID);
+        if (!id || id === '0' || seen[id]) return false;
+        if (Number(r.AUTO_APPROVE)) return false;
+        seen[id] = true;
+        return true;
+      }).map(function(r) {
+        return { USER_ID: r.APPROVER_USER_ID, FULL_NAME: r.FULL_NAME };
+      });
     }
 
     // Get ALL reviewers for this module keyed by phase
@@ -350,6 +578,7 @@ async function getOne(req, res, next) {
       manpowerSaving:       row.MANPOWER_SAVING||'',
       moduleId:             row.MODULE_ID,
       currentApprovalLevel: Number(row.CURRENT_APPROVAL_LEVEL||0),
+      canApprove:           canApprove,
       requestedByUserId:    row.REQUESTED_BY_USER_ID,
       assignedToUserId:     row.ASSIGNED_TO_USER_ID,
       assignmentGroupId:    row.ASSIGNMENT_GROUP_ID,
@@ -366,20 +595,7 @@ async function getOne(req, res, next) {
         approverUserId:a.APPROVER_USER_ID,
         comments:a.COMMENTS, actionedAt:a.ACTIONED_AT,
       })),
-      phaseTasks: phaseTasks.map(t=>({
-        taskId:t.TASK_ID, taskNumber:t.TASK_NUMBER, phaseCode:t.PHASE_CODE,
-        taskType:phaseLabel(t.PHASE_CODE), state:t.STATE,
-        shortDescription:t.SHORT_DESCRIPTION, priority:t.PRIORITY,
-        description:t.DESCRIPTION, templateDownloaded:!!t.TEMPLATE_DOWNLOADED,
-        uploadAttachmentId:t.UPLOAD_ATTACHMENT_ID,
-        plannedStartDate: t.PLANNED_START_DATE ? (t.PLANNED_START_DATE instanceof Date ? t.PLANNED_START_DATE.toISOString().slice(0,10) : String(t.PLANNED_START_DATE).slice(0,10)) : null,
-        plannedEndDate:   t.PLANNED_END_DATE   ? (t.PLANNED_END_DATE   instanceof Date ? t.PLANNED_END_DATE.toISOString().slice(0,10)   : String(t.PLANNED_END_DATE).slice(0,10))   : null,
-        actualStartDate:  t.ACTUAL_START_DATE  ? (t.ACTUAL_START_DATE  instanceof Date ? t.ACTUAL_START_DATE.toISOString().slice(0,10)  : String(t.ACTUAL_START_DATE).slice(0,10))  : null,
-        actualEndDate:    t.ACTUAL_END_DATE    ? (t.ACTUAL_END_DATE    instanceof Date ? t.ACTUAL_END_DATE.toISOString().slice(0,10)    : String(t.ACTUAL_END_DATE).slice(0,10))    : null,
-        reasonForReject:t.REASON_FOR_REJECT, delayReason:t.DELAY_REASON, closedAt:t.CLOSED_AT, createdAt:t.CREATED_AT,
-        assignedTo:t.ASSIGNED_TO, assignedToId:t.ASSIGNED_TO_ID,
-        assignmentGroup:t.ASSIGNMENT_GROUP,
-      })),
+      phaseTasks: phaseTasks.map(mapPhaseTaskRow),
       groupMembers: groupMembers.map(m=>({ userId:m.USER_ID, fullName:m.FULL_NAME })),
       releasePhaseGroups: releasePhaseGroups.map(function(r) {
         return { phaseCode: r.PHASE_CODE, groupId: r.GROUP_ID, groupName: r.GROUP_NAME };
@@ -637,22 +853,24 @@ async function createPhaseTask(req, res, next) {
     const release = await db.queryOne('SELECT release_number,state,module_id FROM crms_releases WHERE release_id='+rid, {});
     if (!release) return res.status(404).json({ error:'Release not found' });
     // Multiple sub-tasks per phase are allowed
-    const agVal = num(assignmentGroupId);
-    const atVal = assignedToUserId ? num(assignedToUserId) : 'NULL';
-    const prioVal = priority ? "'"+safe(priority)+"'" : 'NULL';
     const seqRow  = await db.queryOne('SELECT crms_rtask_seq.NEXTVAL AS seq FROM dual', {});
     const taskNum = 'RTSK'+String(Number(seqRow.SEQ)).padStart(7,'0');
-    await db.executeWithCommit(
-      "INSERT INTO crms_release_tasks(task_number,release_id,phase_code,short_description,"+
-      "assignment_group_id,assigned_to,priority,description,"+
-      "planned_start_date,planned_end_date,cemli,smartsheet_id,process_name) "+
-      "VALUES('"+taskNum+"',"+rid+",'"+safe(phaseCode)+"','"+safe(shortDescription)+"',"+
-      agVal+","+atVal+","+prioVal+",'"+safe(description||'')+"',"+
-      safeDate(plannedStartDate)+","+safeDate(plannedEndDate)+","+
-      (cemli?"'"+safe(cemli)+"'":"NULL")+","+
-      (smartsheetId?"'"+safe(smartsheetId)+"'":"NULL")+","+
-      (processName?"'"+safe(processName)+"'":"NULL")+")", {}
-    );
+    await insertPhaseTask({
+      taskNumber: taskNum,
+      releaseId: rid,
+      phaseCode: phaseCode,
+      shortDescription: shortDescription,
+      assignmentGroupId: assignmentGroupId,
+      assignedToUserId: assignedToUserId,
+      fallbackAssignee: uid,
+      priority: priority,
+      description: description,
+      plannedStartDate: plannedStartDate,
+      plannedEndDate: plannedEndDate,
+      cemli: cemli,
+      smartsheetId: smartsheetId,
+      processName: processName,
+    });
     if (uid && uid !== '0') await db.executeWithCommit("INSERT INTO crms_audit(action,performed_by,cr_number,details) VALUES('Task Created',"+uid+",'"+release.RELEASE_NUMBER+"','"+taskNum+" ("+phaseCode+") created')", {});
     if (assignedToUserId && num(assignedToUserId) !== 0) {
       await db.executeWithCommit("INSERT INTO crms_notifications(user_id,title,message,release_id) VALUES("+num(assignedToUserId)+",'Sub-Task Assigned: "+taskNum+"','"+safe(taskNum+' — '+phaseCode+' task on '+release.RELEASE_NUMBER)+"',"+rid+")", {});
@@ -724,18 +942,19 @@ async function updatePhaseTask(req, res, next) {
     if (!isAdmin2 && !isTaskAssign && !isCrOwner && !isCrAssignee) {
       return res.status(403).json({ error:'Only the task assignee, CR owner, or admin can edit this task.' });
     }
-    const { assignmentGroupId, assignedToUserId, plannedStartDate, plannedEndDate,
-            actualStartDate, actualCompletionDate, delayReason } = req.body;
-    const setParts = [];
-    if (assignmentGroupId    !== undefined) setParts.push('assignment_group_id='+num(assignmentGroupId));
-    if (assignedToUserId     !== undefined) setParts.push('assigned_to='+num(assignedToUserId));
-    if (plannedStartDate     !== undefined) setParts.push('planned_start_date='+safeDate(plannedStartDate));
-    if (plannedEndDate       !== undefined) setParts.push('planned_end_date='+safeDate(plannedEndDate));
-    if (actualStartDate      !== undefined) setParts.push('actual_start_date='+safeDate(actualStartDate));
-    if (actualCompletionDate !== undefined) setParts.push('actual_end_date='+safeDate(actualCompletionDate));
-    if (delayReason          !== undefined) setParts.push('delay_reason=\''+safe(delayReason)+'\'');
-    if (!setParts.length) return res.status(422).json({ error:'Nothing to update' });
+    const update = await buildPhaseTaskUpdateParts(req.body);
+    const setParts = update.setParts;
+    if (!setParts.length) {
+      if (update.skipped.length) {
+        return res.status(422).json({
+          error: 'Cannot save sub-task fields — database is missing columns: ' + update.skipped.join(', ') +
+            '. Contact your DBA to run the CRMS sub-task migration scripts.',
+        });
+      }
+      return res.status(422).json({ error:'Nothing to update' });
+    }
     await db.executeWithCommit('UPDATE crms_release_tasks SET '+setParts.join(',')+' WHERE task_id='+taskId, {});
+    const assignedToUserId = req.body.assignedToUserId;
     if (assignedToUserId && num(assignedToUserId) !== num(task.ASSIGNED_TO)) {
       const rel = await db.queryOne('SELECT release_number FROM crms_releases WHERE release_id='+rid, {});
       await db.executeWithCommit("INSERT INTO crms_notifications(user_id,title,message,release_id) VALUES("+num(assignedToUserId)+",'Sub-Task Reassigned','"+safe('You have been assigned a sub-task on '+(rel?rel.RELEASE_NUMBER:''))+"',"+rid+")", {});
@@ -751,30 +970,8 @@ async function getPhaseTasks(req, res, next) {
     const phase = req.query.phase;
     let where   = 'WHERE rt.release_id='+rid;
     if (phase) where += " AND rt.phase_code='"+safe(phase.toUpperCase())+"'";
-    const rows = await db.query(
-      'SELECT rt.task_id,rt.task_number,rt.phase_code,rt.state,rt.short_description,'+
-      'rt.priority,rt.description,rt.template_downloaded,rt.upload_attachment_id,'+
-      'rt.planned_start_date,rt.planned_end_date,rt.actual_start_date,rt.actual_end_date,'+
-      'rt.reason_for_reject,rt.closed_at,rt.created_at,rt.delay_reason,'+
-      'rt.cemli,rt.smartsheet_id,rt.process_name,'+
-      'u.full_name AS assigned_to,u.user_id AS assigned_to_id,'+
-      'ag.group_name AS assignment_group '+
-      'FROM crms_release_tasks rt '+
-      'LEFT JOIN crms_users u ON u.user_id=rt.assigned_to '+
-      'LEFT JOIN crms_assignment_groups ag ON ag.group_id=rt.assignment_group_id '+
-      where+' ORDER BY rt.phase_code,rt.created_at', {}
-    );
-    return res.json(rows.map(r=>({
-      taskId:r.TASK_ID, taskNumber:r.TASK_NUMBER, phaseCode:r.PHASE_CODE,
-      taskType:phaseLabel(r.PHASE_CODE), state:r.STATE,
-      shortDescription:r.SHORT_DESCRIPTION, priority:r.PRIORITY, description:r.DESCRIPTION,
-      templateDownloaded:!!r.TEMPLATE_DOWNLOADED, uploadAttachmentId:r.UPLOAD_ATTACHMENT_ID,
-      plannedStartDate:r.PLANNED_START_DATE, plannedEndDate:r.PLANNED_END_DATE,
-      actualStartDate:r.ACTUAL_START_DATE, actualEndDate:r.ACTUAL_END_DATE,
-      reasonForReject:r.REASON_FOR_REJECT, closedAt:r.CLOSED_AT, createdAt:r.CREATED_AT,
-      assignedTo:r.ASSIGNED_TO, assignedToId:r.ASSIGNED_TO_ID, assignmentGroup:r.ASSIGNMENT_GROUP,
-      cemli:r.CEMLI||'', smartsheetId:r.SMARTSHEET_ID||'', processName:r.PROCESS_NAME||'',
-    })));
+    const rows = await queryPhaseTasks(where + ' ORDER BY rt.phase_code,rt.created_at', { includeGroup: true });
+    return res.json(rows.map(mapPhaseTaskRow));
   } catch(err) { next(err); }
 }
 
@@ -992,12 +1189,12 @@ async function writeStateChange(rid,relNum,fromState,toState,uid,assignedUserId)
     try {
       const relMod = await db.queryOne('SELECT module_id FROM crms_releases WHERE release_id='+rid, {});
       if (relMod && relMod.MODULE_ID) {
-        const flowL1 = await db.queryOne(
-          "SELECT approver_user_id FROM crms_approval_flows "+
-          "WHERE module_id="+num(String(relMod.MODULE_ID))+" AND phase_code='"+newPhaseCode+"' AND level_order=1 "+
-          "ORDER BY approver_user_id FETCH FIRST 1 ROWS ONLY", {}
+        const l1Approvers = await flowQ.queryLevelApprovers(
+          num(String(relMod.MODULE_ID)), newPhaseCode, 1
         );
-        if (flowL1 && flowL1.APPROVER_USER_ID) assignedUserId = num(flowL1.APPROVER_USER_ID);
+        if (l1Approvers.length && l1Approvers[0].APPROVER_USER_ID) {
+          assignedUserId = num(l1Approvers[0].APPROVER_USER_ID);
+        }
       }
     } catch(e2) { /* no flow configured */ }
   }
@@ -1569,13 +1766,7 @@ async function getApprovalFlowOptions(req, res, next) {
 
     // Get all approval flow entries for this module + requested phase, ordered by level
     const qPhase2 = (req.query && req.query.phase) ? String(req.query.phase) : 'RD';
-    const rows = await db.query(
-      "SELECT af.level_order,af.approver_user_id,af.auto_approve,u.full_name "+
-      "FROM crms_approval_flows af "+
-      "JOIN crms_users u ON u.user_id=af.approver_user_id AND u.is_active=1 "+
-      "WHERE af.module_id="+mid+" AND af.phase_code='"+safe(qPhase2)+"' "+
-      "ORDER BY af.level_order,u.full_name", {}
-    ).catch(function(){ return []; });
+    const rows = await flowQ.queryPhaseApprovers(mid, qPhase2);
 
     // Get module name
     const modRow = await db.queryOne('SELECT module_name FROM crms_modules WHERE module_id='+mid, {}).catch(function(){ return null; });

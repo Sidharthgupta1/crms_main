@@ -2,6 +2,7 @@
 
 const db     = require('../config/db');
 const logger = require('../config/logger');
+const flowQ  = require('../utils/approvalFlowQueries');
 
 function safe(s) { return String(s||'').replace(/'/g,"''"); }
 function num(n)  { return String(parseInt(n,10)||0); }
@@ -39,39 +40,29 @@ async function triggerApproval(releaseId, relNum, requestedBy, modId, phaseCode,
     return { autoApproved:true, reason:'no_module', newState:afterState };
   }
 
-  // Get ALL approvers for Level 1 of this phase from crms_approval_flows
-  const level1Rows = await db.query(
-    "SELECT af.level_order,af.approver_user_id,af.auto_approve,u.full_name "+
-    "FROM crms_approval_flows af "+
-    "JOIN crms_users u ON u.user_id=af.approver_user_id AND u.is_active=1 "+
-    "WHERE af.module_id="+mid+" AND af.phase_code='"+phaseCode+"' AND af.level_order=1 "+
-    "ORDER BY u.full_name", {}
-  ).catch(function(){ return []; });
+  // Get ALL approvers for this phase (mapping table + legacy fallback)
+  const flowRows = await flowQ.queryPhaseApprovers(mid, phaseCode);
+
+  const level1Rows = flowRows.filter(function(r) { return Number(r.LEVEL_ORDER) === 1; });
 
   // Auto-approve if no approvers configured
-  if (!level1Rows.length) {
+  if (!flowRows.length) {
     if (!afterState) return { autoApproved:true, reason:'no_flow' };
     await db.executeWithCommit("UPDATE crms_releases SET state='"+safe(afterState)+"',current_approval_level=0,updated_at=SYSDATE WHERE release_id="+rid, {});
     await db.executeWithCommit("INSERT INTO crms_release_history(release_id,action,from_state,to_state,changed_by) VALUES("+rid+",'State Change','"+safe(fromState)+"','"+safe(afterState)+"',"+reqBy+")", {});
     return { autoApproved:true, reason:'no_approver_flow', newState:afterState };
   }
 
-  // Determine active approver
-  let approverUserId = null;
-  let approverName   = '';
-
+  // Determine display name for requester notification (selected or all L1 approvers)
+  let approverName = '';
   if (selectedApproverId) {
-    // Verify the selected person is actually in Level 1 of this flow
-    const match = level1Rows.find(function(r){ return num(r.APPROVER_USER_ID) === num(selectedApproverId); });
-    if (match) {
-      approverUserId = num(selectedApproverId);
-      approverName   = match.FULL_NAME;
-    }
+    const match = level1Rows.find(function(r) {
+      return num(r.APPROVER_USER_ID) === num(selectedApproverId);
+    });
+    if (match) approverName = match.FULL_NAME;
   }
-  if (!approverUserId && level1Rows.length) {
-    // Default to first L1 approver if selection invalid or not given
-    approverUserId = num(level1Rows[0].APPROVER_USER_ID);
-    approverName   = level1Rows[0].FULL_NAME;
+  if (!approverName && level1Rows.length) {
+    approverName = level1Rows.map(function(r) { return r.FULL_NAME; }).join(', ');
   }
 
   // Build state name
@@ -81,25 +72,30 @@ async function triggerApproval(releaseId, relNum, requestedBy, modId, phaseCode,
     ? 'Deployment Approval L1'
     : prefix + ' Awaiting Approval L1';
 
-  // Record in crms_release_approvals (one row per L1 approver in the flow)
+  // Record in crms_release_approvals — one pending row per approver at every level
   await db.executeWithCommit("DELETE FROM crms_release_approvals WHERE release_id="+rid+" AND phase_code='"+phaseCode+"'", {});
-  for (const row of level1Rows) {
+  for (const row of flowRows) {
     const auid = num(row.APPROVER_USER_ID);
+    const lvl  = num(row.LEVEL_ORDER);
     await db.executeWithCommit(
       "INSERT INTO crms_release_approvals(release_id,module_id,phase_code,level_order,approver_user_id,status) "+
-      "VALUES("+rid+","+mid+",'"+phaseCode+"',1,"+auid+",'Pending')", {}
+      "VALUES("+rid+","+mid+",'"+phaseCode+"',"+lvl+","+auid+",'Pending')", {}
     );
   }
 
   await db.executeWithCommit("UPDATE crms_releases SET state='"+safe(newState)+"',current_approval_level=1,updated_at=SYSDATE WHERE release_id="+rid, {});
   await db.executeWithCommit("INSERT INTO crms_release_history(release_id,action,from_state,to_state,changed_by) VALUES("+rid+",'State Change','"+safe(fromState)+"','"+safe(newState)+"',"+reqBy+")", {});
 
-  // Notify the active approver
-  await db.executeWithCommit(
-    "INSERT INTO crms_notifications(user_id,title,message,release_id) VALUES("+
-    approverUserId+",'Approval Required — "+phaseCode+" L1','"+
-    safe(relNum+' requires your '+phaseCode+' Level 1 approval')+"',"+rid+")"
-  ).catch(function(){});
+  // Notify every Level 1 approver
+  for (const row of level1Rows) {
+    const notifyUid = num(row.APPROVER_USER_ID);
+    if (!notifyUid || notifyUid === '0') continue;
+    await db.executeWithCommit(
+      "INSERT INTO crms_notifications(user_id,title,message,release_id) VALUES("+
+      notifyUid+",'Approval Required — "+phaseCode+" L1','"+
+      safe(relNum+' requires your '+phaseCode+' Level 1 approval')+"',"+rid+")"
+    ).catch(function(){});
+  }
 
   // Notify requester
   if (reqBy) {
@@ -113,6 +109,29 @@ async function triggerApproval(releaseId, relNum, requestedBy, modId, phaseCode,
   logger.info('Approval triggered', { releaseId:rid, phaseCode, level:1, approverName });
   return { newState, approverName, levelOrder:1, flowType:phaseCode };
 }
+// Ensure pending approval rows exist for every mapped approver at this level
+async function ensureLevelApprovalRecords(rid, mid, phaseCode, curLevel) {
+  const flowRows = await flowQ.queryLevelApprovers(mid, phaseCode, curLevel);
+
+  for (const row of flowRows) {
+    const auid = num(row.APPROVER_USER_ID);
+    if (!auid || auid === '0') continue;
+
+    const existing = await db.queryOne(
+      "SELECT approval_id FROM crms_release_approvals "+
+      "WHERE release_id="+rid+" AND phase_code='"+phaseCode+"' AND level_order="+curLevel+
+      " AND approver_user_id="+auid, {}
+    ).catch(function(){ return null; });
+
+    if (!existing) {
+      await db.executeWithCommit(
+        "INSERT INTO crms_release_approvals(release_id,module_id,phase_code,level_order,approver_user_id,status) "+
+        "VALUES("+rid+","+mid+",'"+phaseCode+"',"+curLevel+","+auid+",'Pending')", {}
+      );
+    }
+  }
+}
+
 // ── POST /releases/:releaseId/approve ────────────────────────────────
 async function approve(req, res, next) {
   try {
@@ -137,6 +156,8 @@ async function approve(req, res, next) {
     if (!phaseCode)
       return res.status(400).json({ error:'Release is not in an approval state: '+curState });
 
+    await ensureLevelApprovalRecords(rid, mid, phaseCode, curLevel);
+
     // Verify this user is the pending approver
     const myApproval = await db.queryOne(
       "SELECT approval_id FROM crms_release_approvals "+
@@ -146,10 +167,15 @@ async function approve(req, res, next) {
     if (!myApproval)
       return res.status(403).json({ error:'You are not the approver for this level, or it has already been actioned.' });
 
-    // Mark this level approved
+    // Mark this level approved; skip other pending approvers at same level
     await db.executeWithCommit(
       "UPDATE crms_release_approvals SET status='Approved',comments='"+safe(comments)+"',actioned_at=SYSDATE "+
       "WHERE approval_id="+num(myApproval.APPROVAL_ID), {}
+    );
+    await db.executeWithCommit(
+      "UPDATE crms_release_approvals SET status='Skipped',actioned_at=SYSDATE "+
+      "WHERE release_id="+rid+" AND phase_code='"+phaseCode+"' AND level_order="+curLevel+
+      " AND status='Pending' AND approver_user_id<>"+uid, {}
     );
     await db.executeWithCommit(
       "INSERT INTO crms_audit(action,performed_by,cr_number,details) VALUES("+
@@ -157,17 +183,16 @@ async function approve(req, res, next) {
     );
 
     // Check next level
-    const nextLvl = await db.queryOne(
-      "SELECT level_order,approver_user_id FROM crms_approval_flows "+
-      "WHERE module_id="+mid+" AND phase_code='"+phaseCode+"' AND level_order="+(curLevel+1), {}
-    );
+    const nextLevel = curLevel + 1;
+    const hasNext   = await flowQ.hasFlowLevel(mid, phaseCode, nextLevel);
+    const nextApprovers = hasNext
+      ? await flowQ.queryLevelApprovers(mid, phaseCode, nextLevel)
+      : [];
 
     let newState, message;
 
-    if (nextLvl) {
+    if (hasNext) {
       // More levels remaining
-      const nextLevel   = Number(nextLvl.LEVEL_ORDER);
-      const nextAprUid  = num(nextLvl.APPROVER_USER_ID);
       var pp = { DRAFT:'Draft', RD:'RD', FSD:'FSD', DEPLOYMENT:'Deployment' };
       newState = phaseCode === 'DEPLOYMENT'
         ? 'Deployment Approval L' + nextLevel
@@ -181,20 +206,23 @@ async function approve(req, res, next) {
         "VALUES("+rid+",'State Change','"+safe(curState)+"','"+safe(newState)+"',"+uid+")", {}
       );
 
-      const nextAprRow = await db.queryOne('SELECT full_name FROM crms_users WHERE user_id='+nextAprUid, {});
-      const nextName   = nextAprRow ? nextAprRow.FULL_NAME : 'Approver';
+      const nextNames = nextApprovers.map(function(r) { return r.FULL_NAME; }).join(', ') || 'Approver';
 
-      await db.executeWithCommit(
-        "INSERT INTO crms_notifications(user_id,title,message,release_id) VALUES("+
-        nextAprUid+",'Approval Required — "+phaseCode+"','"+
-        safe(relNum+' requires your '+phaseCode+' approval (Level '+nextLevel+')')+"',"+rid+")", {}
-      );
+      for (const apr of nextApprovers) {
+        const nextAprUid = num(apr.APPROVER_USER_ID);
+        if (!nextAprUid || nextAprUid === '0') continue;
+        await db.executeWithCommit(
+          "INSERT INTO crms_notifications(user_id,title,message,release_id) VALUES("+
+          nextAprUid+",'Approval Required — "+phaseCode+"','"+
+          safe(relNum+' requires your '+phaseCode+' approval (Level '+nextLevel+')')+"',"+rid+")", {}
+        );
+      }
       await db.executeWithCommit(
         "INSERT INTO crms_notifications(user_id,title,message,release_id) VALUES("+
         reqUserId+",'Approval Progressing','"+
-        safe(relNum+' '+phaseCode+' L'+curLevel+' approved. Now with '+nextName+' (L'+nextLevel+')')+"',"+rid+")", {}
+        safe(relNum+' '+phaseCode+' L'+curLevel+' approved. Now with '+nextNames+' (L'+nextLevel+')')+"',"+rid+")", {}
       );
-      message = phaseCode+' Level '+curLevel+' approved. Sent to Level '+nextLevel+' ('+nextName+').';
+      message = phaseCode+' Level '+curLevel+' approved. Sent to Level '+nextLevel+' ('+nextNames+').';
     } else {
       // All levels approved — move to next state
       const afterState = AFTER_APPROVAL[phaseCode];
@@ -280,6 +308,11 @@ async function reject(req, res, next) {
     const phaseCode = stateToApprovalPhase(curState);
     if (!phaseCode)
       return res.status(400).json({ error:'Release is not in an approval state.' });
+
+    const mid = await db.queryOne('SELECT module_id FROM crms_releases WHERE release_id='+rid, {})
+      .then(function(r){ return r ? num(String(r.MODULE_ID)) : '0'; })
+      .catch(function(){ return '0'; });
+    await ensureLevelApprovalRecords(rid, mid, phaseCode, curLevel);
 
     // Return to the phase state
     const returnState = phaseCodeToState(phaseCode);
@@ -449,14 +482,12 @@ async function getPendingApprovals(req, res, next) {
 async function isApprover(req, res, next) {
   try {
     const uid = String(parseInt(req.user.userId,10)||0);
-    const row = await db.queryOne(
-      'SELECT COUNT(*) AS cnt FROM crms_approval_flows WHERE approver_user_id='+uid, {}
-    );
+    const isMapped = await flowQ.isUserMappedApprover(uid);
     const pending = await db.queryOne(
       'SELECT COUNT(*) AS cnt FROM crms_release_approvals WHERE approver_user_id='+uid+" AND status='Pending'", {}
     );
     return res.json({
-      isApprover: Number(row.CNT) > 0,
+      isApprover: isMapped,
       pendingCount: Number(pending.CNT),
     });
   } catch(err) { next(err); }
@@ -468,4 +499,6 @@ module.exports = {
   approve, reject,
   myPendingApprovals, getApprovalStatus, myReleaseApprovalStatus,
   getPendingApprovals, isApprover,
+  ensureLevelApprovalRecords,
+  stateToApprovalPhase,
 };
