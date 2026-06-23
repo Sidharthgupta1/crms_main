@@ -1510,6 +1510,7 @@ if (d) { d.textContent = 'Async Error: ' + msg; d.style.display = 'block'; }
     'editGroupMembers','openAddCompany','openAddService','openAddModule',
     'uploadRdTemplate','editPhaseGroups','editReviewers','editProcessOwners',
     'editModuleGroups','editModuleUsers','editApprovalFlow','promptApproveReject',
+    'renderApprovalsList','approveFromList','rejectFromList',
     'renderOracleUserMgmt','syncAllOracleUsers','provisionOracleUser',
     'deactivateUser','reactivateUser','resetUserPassword','makeAdmin',
     'renderModules','renderMyPhaseTasks','saveTaskEdits','_doSaveTaskEdits',
@@ -1621,7 +1622,7 @@ async function api(method, path, body, retry) {
       showDbConnectingBanner();
       return null;
     }
-    if (res.status !== 403) toast(err.error || 'Error ' + res.status, true);
+    if (res.status !== 403 || method !== 'GET') toast(err.error || 'Error ' + res.status, true);
     return null;
   }
   if (res.status === 204) return null;
@@ -2847,27 +2848,46 @@ async function openDetail(releaseId) {
   });
 
   // Populate RD Phase Details — show section only if any field has data
-  // Show current pending approver
+  // Show selected approval pipeline for awaiting states
   var pendingApprEl = document.getElementById('dv-pending-approver');
   if (pendingApprEl) {
     var isAwaiting = r.state && (r.state.toLowerCase().includes('awaiting') || r.state.includes('Approval L'));
     var trail      = r.approvalTrail || [];
     var curLvl     = Number(r.currentApprovalLevel) || 0;
-    var pending    = trail.find(function(a) {
-      return String(a.status || '').toLowerCase() === 'pending' &&
-        (!curLvl || Number(a.levelOrder) === curLvl);
-    }) || trail.find(function(a){ return String(a.status || '').toLowerCase() === 'pending'; });
-    if (isAwaiting && pending) {
-      var lvl = pending.levelOrder || pending.level || 1;
+    if (!curLvl && r.state) {
+      var lvlMatch = r.state.match(/L(\d+)$/);
+      curLvl = lvlMatch ? parseInt(lvlMatch[1], 10) : 0;
+    }
+    var phaseCode = '';
+    if (r.state.includes('Draft Awaiting'))       phaseCode = 'DRAFT';
+    else if (r.state.includes('RD Awaiting'))     phaseCode = 'RD';
+    else if (r.state.includes('FSD Awaiting'))    phaseCode = 'FSD';
+    else if (r.state.includes('Deployment'))      phaseCode = 'DEPLOYMENT';
+    var pipeline = trail.filter(function(a) {
+      var pc = String(a.phaseCode || a.flowType || '').toUpperCase();
+      return pc === phaseCode || (!pc && phaseCode);
+    }).slice().sort(function(a, b) { return Number(a.levelOrder) - Number(b.levelOrder); });
+
+    if (isAwaiting && pipeline.length) {
       pendingApprEl.innerHTML =
-        '\u23f3 Pending <strong>Level '+lvl+'</strong> approval with: '+
-        '<strong>'+(pending.approverName||'\u2014')+'</strong>';
+        '\u23f3 Pending '+phaseCode+' approval: '+
+        pipeline.map(function(a) {
+          var isCur = Number(a.levelOrder) === Number(curLvl);
+          return '<strong>L'+a.levelOrder+': '+(a.approverName||'\u2014')+'</strong>'+
+            (isCur ? ' <span style="color:#92400e">(current)</span>' : '');
+        }).join(' &nbsp;\u2192&nbsp; ');
       pendingApprEl.style.display = '';
     } else if (isAwaiting) {
       pendingApprEl.innerHTML = '\u23f3 Pending approval...';
       pendingApprEl.style.display = '';
       GET('/releases/'+(r.releaseId||activeDetailId)+'/approval-status').then(function(ap) {
-        if (ap && ap.pendingWith) {
+        if (ap && ap.pipeline && ap.pipeline.length) {
+          pendingApprEl.innerHTML =
+            '\u23f3 Pending '+phaseCode+' approval: '+
+            ap.pipeline.map(function(a) {
+              return '<strong>L'+a.levelOrder+': '+a.approverName+'</strong>';
+            }).join(' &nbsp;\u2192&nbsp; ');
+        } else if (ap && ap.pendingWith) {
           pendingApprEl.innerHTML =
             '\u23f3 Pending <strong>Level '+(ap.levelOrder||1)+'</strong> approval with: '+
             '<strong>'+ap.pendingWith+'</strong>';
@@ -4645,6 +4665,47 @@ async function saveRdField(fieldKey) {
 // ══════════════════════════════════════════════════════════════════════
 // RD APPROVAL MODAL
 // ══════════════════════════════════════════════════════════════════════
+function buildApproverPickerHtml(fieldId, levelNum, users, options) {
+  options = options || {};
+  var label = options.label || ('Level ' + levelNum + ' Approver');
+  var hint = options.hint || '';
+  var required = options.required !== false;
+  var requiredMark = required ? ' <span style="color:var(--red)">*</span>' : '';
+  var fieldClass = options.fieldClass || 'form-field';
+  var fieldStyle = options.fieldStyle || '';
+  var labelStyle = 'font-size:12px;font-weight:600;color:var(--grey-600);text-transform:uppercase;letter-spacing:.4px';
+  var wrapOpen = '<div class="'+fieldClass+'"'+(fieldStyle ? ' style="'+fieldStyle+'"' : '')+'>';
+
+  if (!users || !users.length) {
+    return wrapOpen+
+      '<label style="'+labelStyle+'">'+label+requiredMark+'</label>'+
+      '<div style="padding:8px 10px;color:var(--grey-400);font-size:13px;font-style:italic">No approvers mapped at this level</div>'+
+      '</div>';
+  }
+
+  if (users.length === 1) {
+    var sole = users[0];
+    return wrapOpen+
+      '<label style="'+labelStyle+'">'+label+requiredMark+'</label>'+
+      '<div style="padding:8px 10px;background:#f8fafc;border:1.5px solid var(--grey-200);border-radius:var(--radius);font-size:13px;font-weight:600;color:var(--grey-800)">'+
+      sole.fullName+'</div>'+
+      '<input type="hidden" id="'+fieldId+'" value="'+sole.userId+'">'+
+      (hint && users.length > 1 ? '<div style="font-size:11px;color:var(--grey-500);margin-top:4px">'+hint+'</div>' : '')+
+      '</div>';
+  }
+
+  var optsHtml = users.map(function(u) {
+    return '<option value="'+u.userId+'">'+u.fullName+'</option>';
+  }).join('');
+  return wrapOpen+
+    '<label style="'+labelStyle+'">'+label+requiredMark+'</label>'+
+    '<select id="'+fieldId+'" style="width:100%;padding:8px 10px;border:1.5px solid var(--grey-200);border-radius:var(--radius);font-family:var(--font);font-size:13px">'+
+    '<option value="">— Select Approver —</option>'+optsHtml+
+    '</select>'+
+    (hint ? '<div style="font-size:11px;color:var(--grey-500);margin-top:4px">'+hint+'</div>' : '')+
+    '</div>';
+}
+
 async function openRdApprovalModal(release) {
   // Map current state to phase code for the API
   var phaseForApproval = (release && release.state) ? ({
@@ -4666,6 +4727,9 @@ async function openRdApprovalModal(release) {
   });
   var sortedLvls = Object.keys(levelMap).map(Number).sort();
   var hasOptions  = sortedLvls.length > 0;
+  // Submitter only picks Level 1 — higher levels are chosen by the prior approver on approve
+  var submitLevels = sortedLvls.filter(function(lv) { return lv === 1; });
+  if (!submitLevels.length && sortedLvls.length) submitLevels = [sortedLvls[0]];
 
   // Phase display name
   var phaseLabel = { RD:'RD Phase', FSD:'FSD Phase', DEPLOYMENT:'Deployment Phase' }[phaseForApproval] || phaseForApproval;
@@ -4677,29 +4741,11 @@ async function openRdApprovalModal(release) {
     (moduleName ? ' &nbsp;|&nbsp; <strong>Module:</strong> '+moduleName : '')+
     '</div>';
 
-  // Build one dropdown per level
+  // Build Level 1 field only (submitter picks their manager)
   var sectionsHtml = '';
   if (hasOptions) {
-    sectionsHtml = sortedLvls.map(function(lv) {
-      var lvUsers = levelMap[lv];
-      var opts = lvUsers.map(function(u) {
-        return '<option value="'+u.userId+'">'+u.fullName+'</option>';
-      }).join('');
-      if (!opts) opts = '<option value="" disabled>No approvers mapped at this level</option>';
-      var isMandatory = (lv === sortedLvls[0]);
-      return '<div class="form-field">'+
-        '<label style="font-size:12px;font-weight:600;color:var(--grey-600);text-transform:uppercase;letter-spacing:.4px">'+
-          'Level '+lv+' Approver'+
-          (isMandatory
-            ? ' <span style="color:var(--red)">*</span>'
-            : ' <span style="font-size:11px;color:var(--grey-400);font-weight:400;text-transform:none">(optional)</span>'
-          )+
-        '</label>'+
-        '<select id="rd-approver-l'+lv+'" '+
-          'style="width:100%;padding:8px 10px;border:1.5px solid var(--grey-200);border-radius:var(--radius);font-family:var(--font);font-size:13px">'+
-          '<option value="">— Select Approver —</option>'+opts+
-        '</select>'+
-      '</div>';
+    sectionsHtml = submitLevels.map(function(lv) {
+      return buildApproverPickerHtml('rd-approver-l'+lv, lv, levelMap[lv] || []);
     }).join('');
   } else {
     sectionsHtml =
@@ -4731,17 +4777,26 @@ async function openRdApprovalModal(release) {
       await doAdvance({});
       return;
     }
-    // Level 1 is mandatory
-    var firstLv  = sortedLvls[0];
-    var firstSel = document.getElementById('rd-approver-l'+firstLv);
-    var approverId = firstSel ? firstSel.value : '';
-    if (!approverId) {
-      toast('Please select a Level '+firstLv+' approver', true);
-      return;
+    var selectedApproverIds = {};
+    var selectedApproversByLevel = {};
+    for (var i = 0; i < submitLevels.length; i++) {
+      var lv = submitLevels[i];
+      var sel = document.getElementById('rd-approver-l'+lv);
+      var approverId = sel ? sel.value : '';
+      if (!approverId) {
+        toast('Please select a Level '+lv+' approver', true);
+        return;
+      }
+      selectedApproverIds['L'+lv] = parseInt(approverId,10);
+      selectedApproversByLevel[lv] = parseInt(approverId,10);
     }
     saveBtn.disabled = true;
     closeModal('input-modal');
-    await doAdvance({ selectedApproverId: parseInt(approverId,10) });
+    await doAdvance({
+      selectedApproverId: selectedApproversByLevel[submitLevels[0]],
+      selectedApproverIds: selectedApproverIds,
+      selectedApproversByLevel: selectedApproversByLevel
+    });
   };
 
   openModal('input-modal');
@@ -5523,7 +5578,22 @@ async function doAdvance(body) {
   var fetchRes;try{fetchRes=await fetch(API_BASE+'/releases/'+activeDetailId+'/advance',{method:'PATCH',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(accessToken||'')},body:JSON.stringify(body)});}catch(ne){showInfoModal('Network Error','Cannot reach server: '+ne.message,true);return;}
   if(!fetchRes.ok){var ed={};try{ed=await fetchRes.json();}catch(e2){}var msg=ed.error||('Error '+fetchRes.status);if(msg.toLowerCase().includes('sub-task')||msg.toLowerCase().includes('subtask')){showInfoModal('Sub-Task Required',msg,true);}else{showInfoModal('Cannot Advance',msg,true);}return;}
   var result=await fetchRes.json().catch(function(){return null;});if(!result)return;
-  if(result.pendingWith){showInfoModal('Submitted for Approval','<strong>'+(result.flowType||'')+'</strong> submitted.<br>Pending with: <strong>'+result.pendingWith+'</strong>',false,'green');}
+  if(result.pendingWith){
+    var pipelineHtml = '';
+    if (result.approvalPipeline && result.approvalPipeline.length) {
+      pipelineHtml = '<br><br><strong>Selected approvers:</strong><br>'+
+        result.approvalPipeline.map(function(a) {
+          return 'L'+a.levelOrder+': <strong>'+a.approverName+'</strong>';
+        }).join('<br>');
+    }
+    showInfoModal(
+      'Submitted for Approval',
+      '<strong>'+(result.flowType||'')+'</strong> submitted.<br>Pending with: <strong>'+result.pendingWith+'</strong>'+
+      pipelineHtml,
+      false,
+      'green'
+    );
+  }
   else if(result.autoApproved){showInfoModal('Auto-Approved','Moved to: <strong>'+result.toState+'</strong>',false,'green');}
   else if(result.toState==='Cancelled'){showInfoModal('CR Cancelled','CR has been cancelled.',false);}
   else if(result.toState==='On Hold'){showInfoModal('CR On Hold','CR is now on hold.',false);}
@@ -6050,6 +6120,7 @@ function renderModuleCard(m) {
         '<button class="btn btn-outline btn-sm" data-action="phasegroups"   data-mid="' + mid + '">Phase Groups</button>',
         '<button class="btn btn-outline btn-sm" data-action="reviewers"    data-mid="' + mid + '">Reviewers</button>',
         '<button class="btn btn-outline btn-sm" data-action="processowners" data-mid="' + mid + '">Process Owners</button>',
+        '<button class="btn btn-outline btn-sm" data-action="users"         data-mid="' + mid + '">Business Users</button>',
         '<button class="btn btn-red btn-sm"     data-action="flow"         data-mid="' + mid + '">Approval Flows</button>',
       '</div>',
     '</div>',
@@ -6704,6 +6775,8 @@ async function editApprovalFlow(moduleId, moduleName) {
 async function submitForApproval(phaseCode) {
   var release = _currentRelease;
   if (!release) return;
+  await openRdApprovalModal(release);
+  return;
   var approvers = release.phaseApprovers || [];
 
   // Build approver dropdown if any configured
@@ -6744,12 +6817,7 @@ async function submitForApproval(phaseCode) {
 }
 
 async function approveRelease() {
-  const comments = prompt('Comments (optional):') || '';
-  const result = await POST('/releases/' + activeDetailId + '/approve', { comments });
-  if (!result) return;
-  toast(result.message, false, 'green');
-  await openDetail(activeDetailId);
-  renderDashboard();
+  await promptApproveReject(activeDetailId, 'approve');
 }
 
 async function rejectRelease() {
@@ -6766,6 +6834,26 @@ async function rejectRelease() {
 // ══════════════════════════════════════════════════════════════════════
 // APPROVALS VIEW — dedicated menu for approvers
 // ══════════════════════════════════════════════════════════════════════
+(function setupApprovalsListActions() {
+  function bind() {
+    var container = document.getElementById('approvals-list');
+    if (!container || container._approvalClickBound) return;
+    container._approvalClickBound = true;
+    container.addEventListener('click', function(e) {
+      var btn = e.target.closest('[data-approval-action]');
+      if (!btn) return;
+      e.preventDefault();
+      var rid = btn.getAttribute('data-rid');
+      var rnum = btn.getAttribute('data-rnum') || '';
+      var action = btn.getAttribute('data-approval-action');
+      if (!rid || !action) return;
+      promptApproveReject(Number(rid), action, { fromList: true, releaseNumber: rnum });
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
+  else bind();
+})();
+
 async function renderApprovalsList() {
   var container = document.getElementById('approvals-list');
   if (!container) return;
@@ -6788,16 +6876,16 @@ async function renderApprovalsList() {
     html += '<tr style="background:'+bg+';border-bottom:1px solid var(--grey-200)">';
     html += '<td style="padding:10px 12px"><a class="cr-link" onclick="openDetail('+item.releaseId+')">'+item.releaseNumber+'</a></td>';
     html += '<td style="padding:10px 12px;font-size:13px">'+item.releaseTitle+'</td>';
-    html += '<td style="padding:10px 12px"><span style="font-size:11px;font-weight:700;padding:3px 8px;border-radius:10px;background:#e3f2fd;color:#1565c0">'+item.phaseCode+'</span></td>';
+    html += '<td style="padding:10px 12px"><span style="font-size:11px;font-weight:700;padding:3px 8px;border-radius:10px;background:#e3f2fd;color:#1565c0">'+item.phaseCode+' L'+item.levelOrder+'</span></td>';
     html += '<td style="padding:10px 12px;font-size:12px">'+prio+'</td>';
     html += '<td style="padding:10px 12px;font-size:12px">'+item.requestedBy+'</td>';
     html += '<td style="padding:10px 12px;font-size:12px">'+(item.plannedStartDate?new Date(item.plannedStartDate).toLocaleDateString():'—')+'</td>';
     html += '<td style="padding:10px 12px">';
     html += '<div style="display:flex;gap:6px">';
-    html += '<button class="btn btn-sm" style="background:var(--green);color:var(--white);border:none;padding:5px 12px;font-size:12px" '+
-            'data-rid="'+item.releaseId+'" data-rnum="'+item.releaseNumber+'" onclick="approveFromList(this.dataset.rid,this.dataset.rnum)">✓ Approve</button>';
-    html += '<button class="btn btn-sm" style="background:#fee2e2;color:var(--red);border:1px solid #fca5a5;padding:5px 12px;font-size:12px" '+
-            'data-rid="'+item.releaseId+'" data-rnum="'+item.releaseNumber+'" onclick="rejectFromList(this.dataset.rid,this.dataset.rnum)">✗ Reject</button>';
+    html += '<button type="button" class="btn btn-sm" style="background:var(--green);color:var(--white);border:none;padding:5px 12px;font-size:12px;cursor:pointer" '+
+            'data-rid="'+item.releaseId+'" data-rnum="'+item.releaseNumber+'" data-approval-action="approve">✓ Approve</button>';
+    html += '<button type="button" class="btn btn-sm" style="background:#fee2e2;color:var(--red);border:1px solid #fca5a5;padding:5px 12px;font-size:12px;cursor:pointer" '+
+            'data-rid="'+item.releaseId+'" data-rnum="'+item.releaseNumber+'" data-approval-action="reject">✗ Reject</button>';
     html += '</div>';
     html += '</td>';
     html += '</tr>';
@@ -6807,22 +6895,11 @@ async function renderApprovalsList() {
 }
 
 async function approveFromList(releaseId, releaseNumber) {
-  var comments = prompt('Approval comments (optional):') || '';
-  var res = await POST('/releases/'+releaseId+'/approve', { comments });
-  if (!res) return;
-  toast('✅ '+releaseNumber+' approved', false, 'green');
-  renderApprovalsList();
-  checkApproverStatus();
+  promptApproveReject(Number(releaseId), 'approve', { fromList: true, releaseNumber: releaseNumber || '' });
 }
 
 async function rejectFromList(releaseId, releaseNumber) {
-  var comments = prompt('Rejection reason (required):');
-  if (!comments || !comments.trim()) { toast('Please provide a rejection reason', true); return; }
-  var res = await POST('/releases/'+releaseId+'/reject', { comments });
-  if (!res) return;
-  toast('↩ '+releaseNumber+' rejected', false);
-  renderApprovalsList();
-  checkApproverStatus();
+  promptApproveReject(Number(releaseId), 'reject', { fromList: true, releaseNumber: releaseNumber || '' });
 }
 
 async function checkApproverStatus() {
@@ -6993,7 +7070,7 @@ function buildApprovalBanner(container, state, trail, release) {
   var phaseCode = '';
   if (state.includes('Draft Awaiting'))       phaseCode = 'DRAFT';
   else if (state.includes('RD Awaiting'))     phaseCode = 'RD';
-  else if (state.includes('FSD Awaiting'))    phaseCode = 'FSD';
+  else if (state.includes('FSD Awaiting') || state.includes('FSD Approval')) phaseCode = 'FSD';
   else if (state.includes('Deployment'))      phaseCode = 'DEPLOYMENT';
 
   // Filter trail for this phase (case-insensitive phase match)
@@ -7019,6 +7096,13 @@ function buildApprovalBanner(container, state, trail, release) {
   });
   var isPendingMine = !!(release && release.canApprove) ||
     (myApproval && String(myApproval.status || '').toLowerCase() === 'pending');
+  var isAwaitingState = state.includes('Awaiting') || state.includes('Approval L');
+  // Show the selected approval pipeline for this phase (one row per level chosen at submit).
+  var visibleTrail = isAwaitingState
+    ? relevant.slice().sort(function(a, b) {
+        return Number(a.levelOrder) - Number(b.levelOrder);
+      })
+    : relevant;
 
   // Banner wrapper
   var wrap = document.createElement('div');
@@ -7033,19 +7117,25 @@ function buildApprovalBanner(container, state, trail, release) {
   // Approval trail
   var body = document.createElement('div');
   body.style.cssText = 'padding:10px 14px;background:#fffbeb';
-  var trailHtml = relevant.map(function(a) {
-    var icon = a.status === 'Approved' ? '✅' : a.status === 'Rejected' ? '❌' : '⏳';
-    var isCur = Number(a.levelOrder) === Number(curLevel);
+  var trailHtml = visibleTrail.map(function(a) {
+    var st = String(a.status || '').toLowerCase();
+    var icon = st === 'approved' ? '✅' : st === 'rejected' ? '❌' : st === 'skipped' ? '⏭' : '⏳';
+    var isCur = Number(a.levelOrder) === Number(curLevel) && st === 'pending';
+    var isUpcoming = Number(a.levelOrder) > Number(curLevel) && st === 'pending';
     return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;'+
-           (isCur?'font-weight:700;color:#92400e':'color:#64748b')+'">'+
+           (isCur ? 'font-weight:700;color:#92400e' : isUpcoming ? 'color:#92400e' : 'color:#64748b')+'">'+
            '<span>'+icon+'</span>'+
            '<span style="font-size:12px">L'+a.levelOrder+': '+a.approverName+'</span>'+
-           (a.status!=='Pending'?'<span style="font-size:11px;color:var(--grey-400)">'+a.status+(a.comments?' — '+a.comments:'')+'</span>':'')+'</div>';
+           (st !== 'pending'
+             ? '<span style="font-size:11px;color:var(--grey-400)">'+a.status+(a.comments?' — '+a.comments:'')+'</span>'
+             : (isUpcoming ? '<span style="font-size:11px;color:#b45309">Upcoming</span>' : ''))+
+           '</div>';
   }).join('');
   body.innerHTML = trailHtml || '<div style="font-size:12px;color:var(--grey-400)">Waiting for approver response</div>';
 
-  // Approve / Reject buttons for current approver
-  if (isPendingMine || isAdmin) {
+  // Approve / Reject buttons — FSD approval is admin-only; other phases use normal approvers
+  var canShowApprovalActions = phaseCode === 'FSD' ? isAdmin : (isPendingMine || isAdmin);
+  if (canShowApprovalActions) {
     var actions = document.createElement('div');
     actions.style.cssText = 'padding:10px 14px;background:#fffbeb;border-top:1px solid #fde68a;display:flex;gap:8px';
     var approveBtn = document.createElement('button');
@@ -7067,29 +7157,81 @@ function buildApprovalBanner(container, state, trail, release) {
   container.appendChild(wrap);
 }
 
-async function promptApproveReject(releaseId, action) {
+async function promptApproveReject(releaseId, action, opts) {
+  opts = opts || {};
   var isApprove = action === 'approve';
+  var nextLevelHtml = '';
+  var needsNextLevel = false;
+  var nextLevelNum = 0;
+
+  if (isApprove) {
+    var release = await GET('/releases/' + releaseId);
+    var isAdmin = currentUser && currentUser.role === 'admin';
+    var phaseCode = '';
+    if (release && release.state) {
+      if (release.state.indexOf('RD') >= 0 && release.state.indexOf('FSD') < 0) phaseCode = 'RD';
+      else if (release.state.indexOf('FSD') >= 0) phaseCode = 'FSD';
+      else if (release.state.indexOf('Deployment') >= 0) phaseCode = 'DEPLOYMENT';
+    }
+    var curLevel = release ? Number(release.currentApprovalLevel) : 1;
+    nextLevelNum = curLevel + 1;
+
+    // FSD: admin completes in one step — no L2/L3 picker
+    if (phaseCode && !(phaseCode === 'FSD' && isAdmin)) {
+      var flowOpts = await GET('/releases/' + releaseId + '/approval-flow-options?phase=' + phaseCode);
+      var levels = (flowOpts && flowOpts.levels) || [];
+      var nextLevelUsers = levels.filter(function(u) { return Number(u.levelOrder) === nextLevelNum; });
+      var trail = (release && release.approvalTrail) || [];
+      var nextAssigned = trail.some(function(a) {
+        return a.phaseCode === phaseCode && Number(a.levelOrder) === nextLevelNum;
+      });
+
+      if (nextLevelUsers.length && !nextAssigned) {
+        needsNextLevel = true;
+        nextLevelHtml = buildApproverPickerHtml('next-level-approver', nextLevelNum, nextLevelUsers, {
+          fieldStyle: 'margin-top:12px',
+          hint: 'Select who should approve at Level '+nextLevelNum+' (your manager\'s manager)',
+        });
+      }
+    }
+  }
+
   document.getElementById('input-modal-title').textContent = isApprove ? 'Approve Release' : 'Reject Release';
   document.getElementById('input-modal-body').innerHTML =
     '<div class="form-field">' +
     '<label>'+(isApprove ? 'Comments (optional)' : 'Rejection Reason *')+'</label>' +
     '<textarea id="approval-comment" style="width:100%;padding:8px;border:1.5px solid var(--grey-200);border-radius:4px;font-family:var(--font);font-size:13px;min-height:80px" placeholder="'+(isApprove?'Optional comments…':'Required — explain why this is rejected…')+'"></textarea>' +
-    '</div>';
+    '</div>' + nextLevelHtml;
   document.getElementById('input-modal-save').textContent = isApprove ? 'Confirm Approve' : 'Confirm Reject';
   document.getElementById('input-modal-save').className = isApprove ? 'btn btn-green' : 'btn';
   if (!isApprove) {
     document.getElementById('input-modal-save').style.cssText = 'background:#dc2626;color:#fff;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;font-weight:600';
+  } else {
+    document.getElementById('input-modal-save').style.cssText = '';
   }
   document.getElementById('input-modal-save').onclick = async function() {
     var comment = document.getElementById('approval-comment').value.trim();
     if (!isApprove && !comment) { toast('Rejection reason is required', true); return; }
+    var body = { comments: comment };
+    if (needsNextLevel) {
+      var nextSel = document.getElementById('next-level-approver');
+      var nextId = nextSel ? nextSel.value : '';
+      if (!nextId) { toast('Please select a Level '+nextLevelNum+' approver', true); return; }
+      body.selectedApproverId = parseInt(nextId, 10);
+    }
     var endpoint = '/releases/' + releaseId + '/' + action;
-    var result = await POST(endpoint, { comments: comment });
+    var result = await POST(endpoint, body);
     if (!result) return;
-    toast(result.message || (isApprove ? 'Approved!' : 'Rejected'), false, isApprove ? 'green' : '');
+    var rnum = opts.releaseNumber || '';
+    toast(result.message || (isApprove ? (rnum ? '✅ '+rnum+' approved' : 'Approved!') : (rnum ? '↩ '+rnum+' rejected' : 'Rejected')), false, isApprove ? 'green' : '');
     closeModal('input-modal');
-    await openDetail(releaseId);
-    renderDashboard();
+    if (opts.fromList) {
+      renderApprovalsList();
+      checkApproverStatus();
+    } else {
+      await openDetail(releaseId);
+      renderDashboard();
+    }
   };
   openModal('input-modal');
 }

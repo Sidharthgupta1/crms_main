@@ -481,16 +481,15 @@ async function getOne(req, res, next) {
       const phaseCode = apprCtrl.stateToApprovalPhase
         ? apprCtrl.stateToApprovalPhase(row.STATE)
         : null;
-      if (phaseCode && row.MODULE_ID && apprCtrl.ensureLevelApprovalRecords) {
-        await apprCtrl.ensureLevelApprovalRecords(rid, num(String(row.MODULE_ID)), phaseCode, curLevel);
-        if (viewerUid !== '0') {
-          const mine = await db.queryOne(
-            "SELECT approval_id FROM crms_release_approvals "+
-            "WHERE release_id="+rid+" AND phase_code='"+phaseCode+"' AND level_order="+curLevel+
-            " AND approver_user_id="+viewerUid+" AND status='Pending'", {}
-          ).catch(function(){ return null; });
-          canApprove = !!mine || (req.user && req.user.role === 'admin');
-        }
+      if (phaseCode && row.MODULE_ID && viewerUid !== '0') {
+        const mine = await db.queryOne(
+          "SELECT approval_id FROM crms_release_approvals "+
+          "WHERE release_id="+rid+" AND phase_code='"+phaseCode+"' AND level_order="+curLevel+
+          " AND approver_user_id="+viewerUid+" AND status='Pending'", {}
+        ).catch(function(){ return null; });
+        canApprove = (phaseCode === 'FSD')
+          ? !!(req.user && req.user.role === 'admin')
+          : (!!mine || (req.user && req.user.role === 'admin'));
       }
     }
 
@@ -713,13 +712,14 @@ async function create(req, res, next) {
 }
 
 // ── PATCH /releases/:releaseId/advance ───────────────────────────────
-// Body: { selectedApproverId? } — dynamic approver override
+// Body: { selectedApproverId?, selectedApproversByLevel? } — per-level approver override
 async function advanceState(req, res, next) {
   try {
     const rid   = num(req.params.releaseId);
     const force = (req.body||{}).force;
     const uid   = num(req.user.userId);
     const selectedApproverId = (req.body||{}).selectedApproverId;
+    const selectedApproversByLevel = (req.body||{}).selectedApproversByLevel;
 
     const release = await db.queryOne(
       'SELECT release_id,state,release_number,module_id,assigned_to_user_id,requested_by '+
@@ -758,7 +758,9 @@ async function advanceState(req, res, next) {
         });
       }
       // Trigger approval — pass selected approver if provided
-      const r = await getApprCtrl().triggerApproval(rid,relNum,uid,modId,phaseCode,selectedApproverId);
+      const r = await getApprCtrl().triggerApproval(
+        rid, relNum, uid, modId, phaseCode, selectedApproverId, selectedApproversByLevel
+      );
       if (r.error) return res.status(400).json({ error:r.error });
       // Auto-create Task List row when RD Phase is submitted
       if (phaseCode === 'RD') {
@@ -792,7 +794,14 @@ async function advanceState(req, res, next) {
         return res.json({ releaseId:Number(rid), fromState:cur, toState:r.newState||AFTER_APPROVAL[phaseCode], autoApproved:true });
       }
       if (uid && uid !== '0') await db.executeWithCommit("INSERT INTO crms_audit(action,performed_by,cr_number,details) VALUES('State Change',"+uid+",'"+relNum+"','"+safe(cur)+" -> "+safe(r.newState)+"')", {});
-      return res.json({ releaseId:Number(rid), fromState:cur, toState:r.newState, pendingWith:r.approverName, flowType:phaseCode });
+      return res.json({
+        releaseId: Number(rid),
+        fromState: cur,
+        toState: r.newState,
+        pendingWith: r.approverName,
+        flowType: phaseCode,
+        approvalPipeline: r.approvalPipeline || [],
+      });
     }
 
     // Manual advance phases (sub-task required)
@@ -1789,27 +1798,55 @@ async function getApprovalFlowOptions(req, res, next) {
 }
 
 // ── GET /releases/:releaseId/approval-status ──────────────────────────
-// Returns current pending approver for a CR — works for old and new CRs
+// Returns current pending approver and selected pipeline for a CR
 async function getApprovalStatus(req, res, next) {
   try {
     const rid = num(req.params.releaseId);
-    // Check crms_release_approvals for a pending record
-    const pending = await db.queryOne(
-      "SELECT ra.level_order,ra.approver_user_id,u.full_name "+
+    const release = await db.queryOne(
+      'SELECT state,current_approval_level FROM crms_releases WHERE release_id='+rid+' AND is_deleted=0', {}
+    ).catch(function(){ return null; });
+
+    const rows = await db.query(
+      "SELECT ra.level_order,ra.approver_user_id,ra.phase_code,ra.status,u.full_name "+
       "FROM crms_release_approvals ra "+
       "JOIN crms_users u ON u.user_id=ra.approver_user_id "+
-      "WHERE ra.release_id="+rid+" AND ra.status='Pending' "+
-      "ORDER BY ra.level_order FETCH FIRST 1 ROWS ONLY", {}
-    ).catch(function(){ return null; });
+      "WHERE ra.release_id="+rid+" ORDER BY ra.phase_code,ra.level_order", {}
+    ).catch(function(){ return []; });
+
+    let phaseCode = null;
+    if (release && release.STATE) {
+      const apprCtrl = getApprCtrl();
+      phaseCode = apprCtrl.stateToApprovalPhase
+        ? apprCtrl.stateToApprovalPhase(release.STATE)
+        : null;
+    }
+
+    const pipeline = rows
+      .filter(function(r) { return !phaseCode || r.PHASE_CODE === phaseCode; })
+      .map(function(r) {
+        return {
+          levelOrder:   Number(r.LEVEL_ORDER),
+          approverId:   Number(r.APPROVER_USER_ID),
+          approverName: r.FULL_NAME,
+          status:       r.STATUS,
+        };
+      });
+
+    const curLevel = release ? Number(release.CURRENT_APPROVAL_LEVEL || 0) : 0;
+    const pending = pipeline.find(function(r) {
+      return String(r.status || '').toLowerCase() === 'pending' &&
+        (!curLevel || r.levelOrder === curLevel);
+    }) || pipeline.find(function(r) { return String(r.status || '').toLowerCase() === 'pending'; });
 
     if (pending) {
       return res.json({
-        pendingWith:  pending.FULL_NAME,
-        levelOrder:   Number(pending.LEVEL_ORDER),
-        approverId:   Number(pending.APPROVER_USER_ID),
+        pendingWith: pending.approverName,
+        levelOrder:  pending.levelOrder,
+        approverId:  pending.approverId,
+        pipeline,
       });
     }
-    return res.json({ pendingWith: null });
+    return res.json({ pendingWith: null, pipeline });
   } catch(err) { next(err); }
 }
 
