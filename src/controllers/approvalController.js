@@ -286,11 +286,11 @@ async function approve(req, res, next) {
       return res.status(400).json({ error:'Release is not in an approval state: '+curState });
 
     // FSD approval → Development Phase is admin-only
-    if (phaseCode === 'FSD' && !isAdmin) {
-      return res.status(403).json({ error:'Only an administrator can approve FSD and move to Development Phase.' });
-    }
+    //if (phaseCode === 'FSD' && !isAdmin) {
+    //  return res.status(403).json({ error:'Only an administrator can approve FSD and move to Development Phase.' });
+    //}
 
-    const forceComplete = phaseCode === 'FSD' && isAdmin;
+    const forceComplete = false;
 
     await ensureLevelApprovalRecords(rid, mid, phaseCode, curLevel,null);
 
@@ -555,7 +555,7 @@ async function myPendingApprovals(req, res, next) {
   try {
     const uid  = num(req.user.userId);
     const isAdmin = req.user && req.user.role === 'admin';
-    const fsdFilter = isAdmin ? '' : " AND ra.phase_code <> 'FSD'";
+    const fsdFilter = '';
     const rows = await db.query(
       'SELECT ra.approval_id,ra.release_id,ra.level_order,ra.phase_code,ra.created_at,'+
       'r.release_number,r.title,r.state,m.module_name,u.full_name AS requested_by '+
@@ -646,7 +646,7 @@ async function getPendingApprovals(req, res, next) {
   try {
     const uid = String(parseInt(req.user.userId,10)||0);
     const isAdmin = req.user && req.user.role === 'admin';
-    const fsdFilter = isAdmin ? '' : " AND ra.phase_code <> 'FSD'";
+    const fsdFilter = '';
     const rows = await db.query(
       'SELECT ra.approval_id,ra.phase_code,ra.level_order,ra.status,'+
       'r.release_id,r.release_number,r.state,r.title,r.priority,r.planned_start_date,'+
@@ -685,7 +685,7 @@ async function isApprover(req, res, next) {
   try {
     const uid = String(parseInt(req.user.userId,10)||0);
     const isAdmin = req.user && req.user.role === 'admin';
-    const fsdFilter = isAdmin ? '' : " AND ra.phase_code <> 'FSD'";
+    const fsdFilter = '';
     const isMapped = await flowQ.isUserMappedApprover(uid);
     const pending = await db.queryOne(
       'SELECT COUNT(*) AS cnt FROM crms_release_approvals ra '+
