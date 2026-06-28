@@ -266,7 +266,6 @@ async function approve(req, res, next) {
     const uid      = num(req.user.userId);
     const comments = (req.body.comments||'').trim();
     const selectedNextApproverId = String(req.body.selectedApproverId || req.body.nextApproverId || '').trim();
-    const isAdmin  = req.user && req.user.role === 'admin';
 
     const release = await db.queryOne(
       'SELECT release_id,state,release_number,module_id,current_approval_level,requested_by '+
@@ -285,66 +284,27 @@ async function approve(req, res, next) {
     if (!phaseCode)
       return res.status(400).json({ error:'Release is not in an approval state: '+curState });
 
-    // FSD approval → Development Phase is admin-only
-    if (phaseCode === 'FSD' && !isAdmin) {
-      return res.status(403).json({ error:'Only an administrator can approve FSD and move to Development Phase.' });
-    }
-
-    const forceComplete = phaseCode === 'FSD' && isAdmin;
+    const forceComplete = false;
 
     await ensureLevelApprovalRecords(rid, mid, phaseCode, curLevel,null);
 
-    // Verify this user is the pending approver (admin may override for FSD)
     const myApproval = await db.queryOne(
       "SELECT approval_id FROM crms_release_approvals "+
       "WHERE release_id="+rid+" AND level_order="+curLevel+
       " AND approver_user_id="+uid+" AND status='Pending' AND phase_code='"+phaseCode+"'", {}
     );
-    if (!myApproval && !isAdmin) {
+    if (!myApproval) {
       return res.status(403).json({ error:'You are not the approver for this level, or it has already been actioned.' });
     }
 
-    if (myApproval) {
-      // Mark this level approved; skip other pending approvers at same level
-      await db.executeWithCommit(
-        "UPDATE crms_release_approvals SET status='Approved',comments='"+safe(comments)+"',actioned_at=SYSDATE "+
-        "WHERE approval_id="+num(myApproval.APPROVAL_ID), {}
-      );
-      await db.executeWithCommit(
-        "UPDATE crms_release_approvals SET status='Skipped',actioned_at=SYSDATE "+
-        "WHERE release_id="+rid+" AND phase_code='"+phaseCode+"' AND level_order="+curLevel+
-        " AND status='Pending' AND approver_user_id<>"+uid, {}
-      );
-    } else {
-      // Admin override — not the designated approver
-      await db.executeWithCommit(
-        "UPDATE crms_release_approvals SET status='Skipped',actioned_at=SYSDATE "+
-        "WHERE release_id="+rid+" AND phase_code='"+phaseCode+"' AND level_order="+curLevel+
-        " AND status='Pending'", {}
-      );
-      await db.executeWithCommit(
-        "INSERT INTO crms_release_approvals(release_id,module_id,phase_code,level_order,approver_user_id,status,comments,actioned_at) "+
-        "VALUES("+rid+","+mid+",'"+phaseCode+"',"+curLevel+","+uid+",'Approved','"+safe(comments)+"',SYSDATE)", {}
-      );
-    }
-    await db.executeWithCommit(
-      "INSERT INTO crms_audit(action,performed_by,cr_number,details) VALUES("+
-      "'Approval',"+uid+",'"+relNum+"','"+phaseCode+" Level "+curLevel+" approved by "+safe(req.user.fullName)+
-      (forceComplete ? ' (admin — moved to Development)' : '')+"')", {}
-    );
-
-    if (forceComplete) {
-      // Skip any remaining pending levels — admin completes FSD in one step
-      await db.executeWithCommit(
-        "UPDATE crms_release_approvals SET status='Skipped',actioned_at=SYSDATE "+
-        "WHERE release_id="+rid+" AND phase_code='"+phaseCode+"' AND status='Pending'", {}
-      );
-    }
-
-    // Check next level — prior approver must pick the next-level person if not yet assigned
+    // ── CHECK NEXT LEVEL REQUIREMENT BEFORE COMMITTING APPROVAL ──────
+    // If a next level exists and no pending records exist there, the user
+    // MUST provide selectedNextApproverId.  Fail early so the user's
+    // current-level approval is NOT committed and left in limbo.
     const nextLevel = curLevel + 1;
     const hasNext   = forceComplete ? false : await flowQ.hasFlowLevel(mid, phaseCode, nextLevel);
     let nextApprovers = [];
+    let nextApproverPicked = null;
     if (hasNext) {
       nextApprovers = await db.query(
         'SELECT ra.approver_user_id,u.full_name FROM crms_release_approvals ra '+
@@ -361,18 +321,47 @@ async function approve(req, res, next) {
           });
         }
         const flowRows = await flowQ.queryLevelApprovers(mid, phaseCode, nextLevel);
-        const picked = flowRows.find(function(r) {
+        nextApproverPicked = flowRows.find(function(r) {
           return num(r.APPROVER_USER_ID) === num(selectedNextApproverId);
         });
-        if (!picked) {
+        if (!nextApproverPicked) {
           return res.status(400).json({ error: 'Selected approver is not valid for Level '+nextLevel+'.' });
         }
-        await db.executeWithCommit(
-          "INSERT INTO crms_release_approvals(release_id,module_id,phase_code,level_order,approver_user_id,status) "+
-          "VALUES("+rid+","+mid+",'"+phaseCode+"',"+nextLevel+","+num(selectedNextApproverId)+",'Pending')", {}
-        );
-        nextApprovers = [{ APPROVER_USER_ID: picked.APPROVER_USER_ID, FULL_NAME: picked.FULL_NAME }];
       }
+    }
+
+    // ── NOW COMMIT THE APPROVAL ──────────────────────────────────────
+    // Mark this level approved; skip other pending approvers at same level
+    await db.executeWithCommit(
+      "UPDATE crms_release_approvals SET status='Approved',comments='"+safe(comments)+"',actioned_at=SYSDATE "+
+      "WHERE approval_id="+num(myApproval.APPROVAL_ID), {}
+    );
+    await db.executeWithCommit(
+      "UPDATE crms_release_approvals SET status='Skipped',actioned_at=SYSDATE "+
+      "WHERE release_id="+rid+" AND phase_code='"+phaseCode+"' AND level_order="+curLevel+
+      " AND status='Pending' AND approver_user_id<>"+uid, {}
+    );
+    await db.executeWithCommit(
+      "INSERT INTO crms_audit(action,performed_by,cr_number,details) VALUES("+
+      "'Approval',"+uid+",'"+relNum+"','"+phaseCode+" Level "+curLevel+" approved by "+safe(req.user.fullName)+
+      (forceComplete ? ' (admin — moved to Development)' : '')+"')", {}
+    );
+
+    if (forceComplete) {
+      // Skip any remaining pending levels — admin completes FSD in one step
+      await db.executeWithCommit(
+        "UPDATE crms_release_approvals SET status='Skipped',actioned_at=SYSDATE "+
+        "WHERE release_id="+rid+" AND phase_code='"+phaseCode+"' AND status='Pending'", {}
+      );
+    }
+
+    // If next level needs a new pending record (validated above), create it now
+    if (nextApproverPicked) {
+      await db.executeWithCommit(
+        "INSERT INTO crms_release_approvals(release_id,module_id,phase_code,level_order,approver_user_id,status) "+
+        "VALUES("+rid+","+mid+",'"+phaseCode+"',"+nextLevel+","+num(selectedNextApproverId)+",'Pending')", {}
+      );
+      nextApprovers = [{ APPROVER_USER_ID: nextApproverPicked.APPROVER_USER_ID, FULL_NAME: nextApproverPicked.FULL_NAME }];
     }
 
     let newState, message;
@@ -497,14 +486,9 @@ async function reject(req, res, next) {
     if (!phaseCode)
       return res.status(400).json({ error:'Release is not in an approval state.' });
 
-    if (phaseCode === 'FSD' && !(req.user && req.user.role === 'admin')) {
-      return res.status(403).json({ error:'Only an administrator can reject FSD approvals.' });
-    }
-
     const mid = await db.queryOne('SELECT module_id FROM crms_releases WHERE release_id='+rid, {})
       .then(function(r){ return r ? num(String(r.MODULE_ID)) : '0'; })
       .catch(function(){ return '0'; });
-    const isAdmin = req.user && req.user.role === 'admin';
     await ensureLevelApprovalRecords(rid, mid, phaseCode, curLevel,null);
 
     // Return to the phase state
@@ -515,7 +499,7 @@ async function reject(req, res, next) {
       "WHERE release_id="+rid+" AND level_order="+curLevel+
       " AND approver_user_id="+uid+" AND status='Pending' AND phase_code='"+phaseCode+"'", {}
     );
-    if (!myApproval && !(phaseCode === 'FSD' && isAdmin)) {
+    if (!myApproval) {
       return res.status(403).json({ error:'You are not the approver for this level.' });
     }
 
@@ -555,7 +539,7 @@ async function myPendingApprovals(req, res, next) {
   try {
     const uid  = num(req.user.userId);
     const isAdmin = req.user && req.user.role === 'admin';
-    const fsdFilter = isAdmin ? '' : " AND ra.phase_code <> 'FSD'";
+    const fsdFilter = '';
     const rows = await db.query(
       'SELECT ra.approval_id,ra.release_id,ra.level_order,ra.phase_code,ra.created_at,'+
       'r.release_number,r.title,r.state,m.module_name,u.full_name AS requested_by '+
@@ -646,7 +630,7 @@ async function getPendingApprovals(req, res, next) {
   try {
     const uid = String(parseInt(req.user.userId,10)||0);
     const isAdmin = req.user && req.user.role === 'admin';
-    const fsdFilter = isAdmin ? '' : " AND ra.phase_code <> 'FSD'";
+    const fsdFilter = '';
     const rows = await db.query(
       'SELECT ra.approval_id,ra.phase_code,ra.level_order,ra.status,'+
       'r.release_id,r.release_number,r.state,r.title,r.priority,r.planned_start_date,'+
@@ -685,7 +669,7 @@ async function isApprover(req, res, next) {
   try {
     const uid = String(parseInt(req.user.userId,10)||0);
     const isAdmin = req.user && req.user.role === 'admin';
-    const fsdFilter = isAdmin ? '' : " AND ra.phase_code <> 'FSD'";
+    const fsdFilter = '';
     const isMapped = await flowQ.isUserMappedApprover(uid);
     const pending = await db.queryOne(
       'SELECT COUNT(*) AS cnt FROM crms_release_approvals ra '+

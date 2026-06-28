@@ -487,9 +487,7 @@ async function getOne(req, res, next) {
           "WHERE release_id="+rid+" AND phase_code='"+phaseCode+"' AND level_order="+curLevel+
           " AND approver_user_id="+viewerUid+" AND status='Pending'", {}
         ).catch(function(){ return null; });
-        canApprove = (phaseCode === 'FSD')
-          ? !!(req.user && req.user.role === 'admin')
-          : (!!mine || (req.user && req.user.role === 'admin'));
+        canApprove = !!(mine);
       }
     }
 

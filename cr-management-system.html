@@ -7087,7 +7087,6 @@ function buildApprovalBanner(container, state, trail, release) {
   }
 
   var myUid   = currentUser && String(currentUser.userId);
-  var isAdmin = currentUser && currentUser.role === 'admin';
   var myApproval = relevant.find(function(a) {
     var sameLevel = Number(a.levelOrder) === Number(curLevel);
     var byId   = myUid && String(a.approverUserId || '') === myUid;
@@ -7133,8 +7132,7 @@ function buildApprovalBanner(container, state, trail, release) {
   }).join('');
   body.innerHTML = trailHtml || '<div style="font-size:12px;color:var(--grey-400)">Waiting for approver response</div>';
 
-  // Approve / Reject buttons — FSD approval is admin-only; other phases use normal approvers
-  var canShowApprovalActions = phaseCode === 'FSD' ? isAdmin : (isPendingMine || isAdmin);
+  var canShowApprovalActions = isPendingMine;
   if (canShowApprovalActions) {
     var actions = document.createElement('div');
     actions.style.cssText = 'padding:10px 14px;background:#fffbeb;border-top:1px solid #fde68a;display:flex;gap:8px';
@@ -7166,7 +7164,6 @@ async function promptApproveReject(releaseId, action, opts) {
 
   if (isApprove) {
     var release = await GET('/releases/' + releaseId);
-    var isAdmin = currentUser && currentUser.role === 'admin';
     var phaseCode = '';
     if (release && release.state) {
       if (release.state.indexOf('RD') >= 0 && release.state.indexOf('FSD') < 0) phaseCode = 'RD';
@@ -7176,8 +7173,7 @@ async function promptApproveReject(releaseId, action, opts) {
     var curLevel = release ? Number(release.currentApprovalLevel) : 1;
     nextLevelNum = curLevel + 1;
 
-    // FSD: admin completes in one step — no L2/L3 picker
-    if (phaseCode && !(phaseCode === 'FSD' && isAdmin)) {
+    if (phaseCode) {
       var flowOpts = await GET('/releases/' + releaseId + '/approval-flow-options?phase=' + phaseCode);
       var levels = (flowOpts && flowOpts.levels) || [];
       var nextLevelUsers = levels.filter(function(u) { return Number(u.levelOrder) === nextLevelNum; });
