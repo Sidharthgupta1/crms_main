@@ -29,11 +29,11 @@ function safeDate(d) {
 
 const TERMINAL_STATES = ['Closed','Cancelled'];
 
-// ── NEW Lifecycle: RD → RD Approval → FSD → FSD Approval → Dev → Testing → UAT → Deployment Approval L1 → Deployment Approval L2 → Deployment → Closed
+// ── Lifecycle: RD → RD Approval → FSD → FSD Approval → Dev → Testing → UAT → Deployment Approval → Observation → Closed
 const AFTER_APPROVAL = {
   RD:         'FSD Phase',
   FSD:        'Development Phase',
-  DEPLOYMENT: 'Closed',  // after all Deployment approval levels → CR is Closed
+  DEPLOYMENT: 'Observation Phase',  // after all Deployment approval levels → Observation (no approval)
 };
 
 // Manual advances (no approval gate, but sub-task required)
@@ -49,16 +49,27 @@ function stateToPhaseCode(state) {
     'RD Phase':'RD', 'FSD Phase':'FSD',
     'Development Phase':'DEV', 'Testing Phase':'TESTING',
     'UAT Phase':'UAT', 'Deployment Phase':'DEPLOYMENT',
+    'Observation Phase':'OBSERVATION',
   };
   return m[state] || null;
 }
 function phaseToState(code) {
-  const m = { RD:'RD Phase',FSD:'FSD Phase',DEV:'Development Phase',TESTING:'Testing Phase',UAT:'UAT Phase',DEPLOYMENT:'Deployment Phase' };
+  const m = { RD:'RD Phase',FSD:'FSD Phase',DEV:'Development Phase',TESTING:'Testing Phase',UAT:'UAT Phase',DEPLOYMENT:'Deployment Phase',OBSERVATION:'Observation Phase' };
   return m[code] || code;
 }
 function phaseLabel(code) {
-  const m = { RD:'RD Task',FSD:'FSD Task',DEV:'Development Task',TESTING:'Testing Task',UAT:'UAT Task',DEPLOYMENT:'Deployment Task' };
+  const m = { RD:'RD Task',FSD:'FSD Task',DEV:'Development Task',TESTING:'Testing Task',UAT:'UAT Task',DEPLOYMENT:'Deployment Task',OBSERVATION:'Observation Task' };
   return m[code] || code+' Task';
+}
+
+function assertCrOwner(release, uid) {
+  if (!release.CR_OWNER_USER_ID || num(release.CR_OWNER_USER_ID) === '0') {
+    return 'CR Owner must be set before performing this action';
+  }
+  if (num(release.CR_OWNER_USER_ID) !== uid) {
+    return 'Only the CR Owner can perform this action';
+  }
+  return null;
 }
 
 let _releaseTaskColumns = null;
@@ -720,7 +731,7 @@ async function advanceState(req, res, next) {
     const selectedApproversByLevel = (req.body||{}).selectedApproversByLevel;
 
     const release = await db.queryOne(
-      'SELECT release_id,state,release_number,module_id,assigned_to_user_id,requested_by '+
+      'SELECT release_id,state,release_number,module_id,assigned_to_user_id,requested_by,cr_owner_user_id '+
       'FROM crms_releases WHERE release_id='+rid+' AND is_deleted=0', {}
     );
     if (!release) return res.status(404).json({ error:'Release not found' });
@@ -835,10 +846,9 @@ async function advanceState(req, res, next) {
       return res.json({ releaseId:Number(rid), fromState:cur, toState:next });
     }
 
-    // Closed Deployment Phase → Closed (final close after deployment)
-    if (cur === 'Deployment Phase') {
-      await writeStateChange(rid,relNum,cur,'Closed',uid,release.ASSIGNED_TO_USER_ID);
-      return res.json({ releaseId:Number(rid), fromState:cur, toState:'Closed' });
+    // Observation Phase — no advance; use close-cr endpoint instead
+    if (cur === 'Observation Phase') {
+      return res.status(400).json({ error:'Use Close CR to move from Observation to Closed' });
     }
 
     return res.status(400).json({ error:'No transition defined from: '+cur });
@@ -1175,9 +1185,21 @@ async function writeStateChange(rid,relNum,fromState,toState,uid,assignedUserId)
     'UAT Phase':'UAT',
     'Deployment Phase':'DEPLOYMENT','Deployment Approval L1':'DEPLOYMENT',
     'Deployment Approval L2':'DEPLOYMENT','Deployment Approval L3':'DEPLOYMENT',
+    'Observation Phase':'OBSERVATION',
   };
   const newPhaseCode = stateToPhase[toState];
-  if (newPhaseCode) {
+
+  // Observation Phase — assign to CR Owner
+  if (toState === 'Observation Phase') {
+    try {
+      const crOwnerRow = await db.queryOne(
+        'SELECT cr_owner_user_id FROM crms_releases WHERE release_id='+rid, {}
+      );
+      if (crOwnerRow && crOwnerRow.CR_OWNER_USER_ID) {
+        assignedUserId = num(crOwnerRow.CR_OWNER_USER_ID);
+      }
+    } catch(e) { /* skip */ }
+  } else if (newPhaseCode) {
     try {
       // Find the first sub-task assignee for the new phase
       const phaseTask = await db.queryOne(
@@ -1191,7 +1213,24 @@ async function writeStateChange(rid,relNum,fromState,toState,uid,assignedUserId)
     } catch(e) { /* table may not exist */ }
   }
 
-  // If no sub-task assignee found, fall back to L1 approver from crms_approval_flows
+  // If no sub-task assignee found, fall back to Process Owner from module config
+  if (!assignedUserId && newPhaseCode) {
+    try {
+      const relMod = await db.queryOne('SELECT module_id FROM crms_releases WHERE release_id='+rid, {});
+      if (relMod && relMod.MODULE_ID) {
+        const mid = num(String(relMod.MODULE_ID));
+        const po = await db.queryOne(
+          "SELECT user_id FROM crms_phase_process_owners WHERE module_id="+mid+
+          " AND phase_code='"+newPhaseCode+"'", {}
+        );
+        if (po && po.USER_ID) {
+          assignedUserId = num(po.USER_ID);
+        }
+      }
+    } catch(e2) { /* no process owner configured */ }
+  }
+
+  // If no Process Owner found, fall back to L1 approver from crms_approval_flows
   if (!assignedUserId && newPhaseCode) {
     try {
       const relMod = await db.queryOne('SELECT module_id FROM crms_releases WHERE release_id='+rid, {});
@@ -1551,7 +1590,7 @@ async function setCrOwner(req, res, next) {
     // Only settable from FSD Phase onwards
     const allowedStates = ['FSD Phase','FSD Awaiting Approval L1','FSD Awaiting Approval L2',
       'FSD Awaiting Approval L3','Development Phase','Testing Phase','UAT Phase',
-      'Deployment Phase','Closed'];
+      'Deployment Phase','Observation Phase','Closed'];
     if (!allowedStates.includes(release.STATE)) {
       return res.status(400).json({ error: 'CR Owner can only be set from FSD Phase onwards' });
     }
@@ -1657,6 +1696,7 @@ const SEND_BACK_MAP = {
   'Deployment Approval L1':   'Deployment Phase',
   'Deployment Approval L2':   'Deployment Phase',
   'Deployment Approval L3':   'Deployment Phase',
+  'Observation Phase':        'Development Phase',
   'On Hold':                  null,  // special — unhold
 };
 async function sendBack(req, res, next) {
@@ -1667,11 +1707,16 @@ async function sendBack(req, res, next) {
     if (!reason) return res.status(422).json({ error:'Reason for sending back is mandatory' });
 
     const release = await db.queryOne(
-      'SELECT release_id,state,release_number FROM crms_releases WHERE release_id='+rid+' AND is_deleted=0', {}
+      'SELECT release_id,state,release_number,cr_owner_user_id FROM crms_releases WHERE release_id='+rid+' AND is_deleted=0', {}
     );
     if (!release) return res.status(404).json({ error:'Release not found' });
     const cur    = release.STATE;
     const relNum = release.RELEASE_NUMBER;
+
+    if (cur === 'Observation Phase') {
+      const ownerErr = assertCrOwner(release, uid);
+      if (ownerErr) return res.status(403).json({ error: ownerErr });
+    }
 
     const backState = SEND_BACK_MAP[cur];
     if (backState === undefined) return res.status(400).json({ error:'Cannot send back from state: '+cur });
@@ -1719,6 +1764,31 @@ async function unhold(req, res, next) {
     const resumeState = (lastHistory && lastHistory.FROM_STATE) || 'Development Phase';
     await writeStateChange(rid, relNum, 'On Hold', resumeState, uid, null);
     return res.json({ message:'CR resumed', toState:resumeState });
+  } catch(err) { next(err); }
+}
+
+// ── PATCH /releases/:releaseId/close-cr ──────────────────────────────
+// Close CR from Observation Phase — CR Owner only, no approval
+async function closeCR(req, res, next) {
+  try {
+    const rid = num(req.params.releaseId);
+    const uid = num(req.user.userId);
+    const release = await db.queryOne(
+      'SELECT release_id,state,release_number,assigned_to_user_id,cr_owner_user_id '+
+      'FROM crms_releases WHERE release_id='+rid+' AND is_deleted=0', {}
+    );
+    if (!release) return res.status(404).json({ error:'Release not found' });
+    if (release.STATE !== 'Observation Phase') {
+      return res.status(400).json({ error:'Close CR is only available in Observation Phase' });
+    }
+    const ownerErr = assertCrOwner(release, uid);
+    if (ownerErr) return res.status(403).json({ error: ownerErr });
+
+    const cur    = release.STATE;
+    const relNum = release.RELEASE_NUMBER;
+    await writeStateChange(rid, relNum, cur, 'Closed', uid, release.ASSIGNED_TO_USER_ID);
+    logger.info('CR closed from Observation', { rid, relNum });
+    return res.json({ message:'CR closed', fromState: cur, toState:'Closed' });
   } catch(err) { next(err); }
 }
 
@@ -1851,7 +1921,8 @@ async function getApprovalStatus(req, res, next) {
 module.exports = {
   nextNumber, getAll, getOne,
   create, createValidation,
-  advanceState, setCrOwner, getRdApprovalGroups, sendBack, unhold, updateRdFields, getApprovalFlowOptions, getApprovalStatus,
+  advanceState, setCrOwner, getRdApprovalGroups, sendBack, unhold, closeCR,
+  updateRdFields, getApprovalFlowOptions, getApprovalStatus,
   createPhaseTask, updatePhaseTask,
   myPhaseTasks,
   getPhaseTasks, closePhaseTask, uploadTaskDocument, markTemplateDownloaded,

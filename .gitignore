@@ -11,3 +11,4 @@ coverage/
 *.pid
 *.seed
 *.gz
+.cr-management-system.html

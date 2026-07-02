@@ -23,6 +23,7 @@ router.get   ('/:releaseId/approval-flow-options', ctrl.getApprovalFlowOptions);
 router.get   ('/:releaseId/approval-status',       ctrl.getApprovalStatus);
 router.patch ('/:releaseId/send-back',           ctrl.sendBack);
 router.patch ('/:releaseId/unhold',              ctrl.unhold);
+router.patch ('/:releaseId/close-cr',            ctrl.closeCR);
 router.patch ('/:releaseId/rd-fields',   ctrl.updateRdFields);
 router.patch ('/:releaseId/cr-owner',   ctrl.setCrOwner);
 router.patch ('/:releaseId/advance',                            ctrl.advanceState);
