@@ -52,7 +52,9 @@ async function connect() {
   const dbConn = process.env.DB_CONNECTION_STRING;
   if (!dbUser || !dbPass || !dbConn)
     throw new Error('Missing DB_USER / DB_PASSWORD / DB_CONNECTION_STRING in .env');
-
+console.log("DB_USER =", dbUser);
+console.log("DB_CONNECTION_STRING =", dbConn);
+console.log("DB_PASSWORD length =", dbPass?.length);
   pool = await oracledb.createPool({
     user: dbUser, password: dbPass, connectionString: dbConn,
     poolMin:          parseInt(process.env.DB_POOL_MIN,  10) || 2,
