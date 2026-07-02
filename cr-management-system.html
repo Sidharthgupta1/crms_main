@@ -128,6 +128,7 @@
   .badge-testing{background:#fffde7;color:#f57f17}
   .badge-uat{background:#e0f7fa;color:#006064}
   .badge-deployment{background:#e8eaf6;color:#1a237e}
+  .badge-observation{background:#e0f2f1;color:#00695c}
   .badge-closed{background:#e0e0e0;color:#424242}
   .badge-cancelled{background:#ffebee;color:var(--red)}
   .priority-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:5px}
@@ -1340,6 +1341,7 @@ select.tl-cell {
           <button class="btn btn-outline btn-sm" id="dm-hold-btn"   onclick="advanceState('On Hold')" style="display:none">⏸ Put On Hold</button>
           <button class="btn btn-outline btn-sm" id="dm-unhold-btn" onclick="doUnhold()" style="display:none;border-color:var(--green);color:var(--green)">▶ Unhold</button>
           <button class="btn btn-outline btn-sm" id="dm-sendback-btn" onclick="openSendBackModal(_currentRelease)" style="display:none;border-color:var(--amber);color:#856404">↩ Send Back</button>
+          <button class="btn btn-green btn-sm" id="dm-close-cr-btn" onclick="closeCR()" style="display:none">✓ Close CR</button>
           <button class="btn btn-outline btn-sm" onclick="advanceState('Cancelled')">✕ Cancel CR</button>
           <button class="btn btn-red btn-sm" id="dm-advance-btn" onclick="advanceState()">Advance →</button>
         </div>
@@ -1540,6 +1542,7 @@ const STATES = [
   'Development Phase','Testing Phase','UAT Phase',
   'Deployment Approval L1','Deployment Approval L2','Deployment Approval L3',
   'Deployment Phase',
+  'Observation Phase',
   'On Hold','Closed','Cancelled'
 ];
 const NEXT_STATE = {
@@ -1550,6 +1553,7 @@ const NEXT_STATE = {
   'Testing Phase':     'UAT Phase',
   'UAT Phase':         'Deployment Phase',
   'Deployment Phase':  null,
+  'Observation Phase': null,
   'On Hold':           'Development Phase',
 };
 const APPROVAL_STATES = ['Draft','RD Phase','FSD Phase','Deployment Phase'];
@@ -1896,6 +1900,7 @@ function stateBadge(s) {
   else if (s === 'UAT Phase')                                             cls = 'badge-uat';
   else if (s === 'Deployment Phase')                                      cls = 'badge-deployment';
   else if (s.includes('Deployment Approval') || s.includes('Deployment Awaiting')) cls = 'badge-awaiting';
+  else if (s === 'Observation Phase')                                    cls = 'badge-observation';
   else if (s === 'Closed')                                                cls = 'badge-closed';
   else if (s === 'Cancelled')                                             cls = 'badge-cancelled';
   else if (s === 'On Hold')                                               cls = 'badge-hold';
@@ -2778,6 +2783,7 @@ async function openDetail(releaseId) {
     toast('Could not load release details — the server returned an error', true);
     return;
   }
+  _currentRelease = r;
   try {
   document.getElementById('dm-number').textContent      = r.releaseNumber;
   document.getElementById('dm-state-badge').innerHTML   = stateBadge(r.state);
@@ -2788,18 +2794,23 @@ async function openDetail(releaseId) {
   var holdBtn    = document.getElementById('dm-hold-btn');
   var unholdBtn  = document.getElementById('dm-unhold-btn');
   var sbBtn      = document.getElementById('dm-sendback-btn');
+  var closeCrBtn = document.getElementById('dm-close-cr-btn');
   var isAwaiting = r.state && (r.state.toLowerCase().includes('awaiting') || r.state.includes('Approval L'));
   var isTerminal = r.state === 'Closed' || r.state === 'Cancelled';
   var isOnHold   = r.state === 'On Hold';
-  if (holdBtn)   holdBtn.style.display  = (!isOnHold && !isTerminal && !isAwaiting) ? '' : 'none';
+  var isObservation = r.state === 'Observation Phase';
+  var isCrOwner  = currentUser && r.crOwnerUserId && String(r.crOwnerUserId) === String(currentUser.userId);
+  if (holdBtn)   holdBtn.style.display  = (!isOnHold && !isTerminal && !isAwaiting && !isObservation) ? '' : 'none';
   if (unholdBtn) unholdBtn.style.display = isOnHold ? '' : 'none';
   var backTarget = SEND_BACK_MAP_FE[r.state];
   if (sbBtn) {
-    sbBtn.style.display = (backTarget && !isTerminal) ? '' : 'none';
-    if (backTarget) sbBtn.textContent = '\u21a9 Send Back to ' + backTarget;
+    var canSendBack = backTarget && !isTerminal && (!isObservation || isCrOwner);
+    sbBtn.style.display = canSendBack ? '' : 'none';
+    if (backTarget && canSendBack) sbBtn.textContent = '\u21a9 Send Back to ' + backTarget;
   }
+  if (closeCrBtn) closeCrBtn.style.display = (isObservation && isCrOwner) ? '' : 'none';
   if (btn) {
-    if (isAwaiting || isTerminal) {
+    if (isAwaiting || isTerminal || isObservation) {
       btn.style.display = 'none';
     } else {
       btn.style.display = '';
@@ -2967,6 +2978,7 @@ function renderPhaseBar(cur) {
     'UAT Phase',
     'Deployment Approval',  // L1/L2 pre-deployment approval
     'Deployment Phase',
+    'Observation',
     'Closed'
   ];
 
@@ -2981,6 +2993,7 @@ function renderPhaseBar(cur) {
     'UAT Phase':           'UAT',
     'Deployment Approval': 'Deploy Appvl',
     'Deployment Phase':    'Deployment',
+    'Observation':         'Observation',
     'Closed':              'Closed',
   };
 
@@ -2996,6 +3009,7 @@ function renderPhaseBar(cur) {
   else if (cur2 === 'UAT Phase')                                         activeStep = 'UAT Phase';
   else if (cur2.includes('Deployment Approval')||cur2.includes('Deployment Awaiting')) activeStep = 'Deployment Approval';
   else if (cur2 === 'Deployment Phase')                                  activeStep = 'Deployment Phase';
+  else if (cur2 === 'Observation Phase')                                 activeStep = 'Observation';
   else if (cur2 === 'Closed' || cur2 === 'Cancelled')                   activeStep = 'Closed';
   else                                                                   activeStep = cur2;
 
@@ -3403,7 +3417,7 @@ function populateDownloadFilters() {
     'FSD Phase','FSD Awaiting Approval L1','FSD Awaiting Approval L2','FSD Awaiting Approval L3',
     'Development Phase','Testing Phase','UAT Phase',
     'Deployment Approval L1','Deployment Approval L2','Deployment Approval L3',
-    'Deployment Phase','On Hold','Closed','Cancelled'
+    'Deployment Phase','Observation Phase','On Hold','Closed','Cancelled'
   ];
   var PRIORITIES = [
     {v:'1',l:'1 – Critical'},{v:'2',l:'2 – High'},
@@ -4425,7 +4439,7 @@ function renderCrOwnerField(release) {
   var isLocked   = !!release.crOwnerUserId;
   var isFSDOrLater = ['FSD Phase','FSD Awaiting Approval L1','FSD Awaiting Approval L2',
     'FSD Awaiting Approval L3','Development Phase','Testing Phase','UAT Phase',
-    'Deployment Phase','Closed','Cancelled'].indexOf(release.state) >= 0;
+    'Deployment Phase','Observation Phase','Closed','Cancelled'].indexOf(release.state) >= 0;
 
   // Always show the wrap from FSD Phase onwards
   wrap.style.display = isFSDOrLater ? '' : 'none';
@@ -4839,6 +4853,7 @@ var SEND_BACK_MAP_FE = {
   'UAT Phase':'Testing Phase','Deployment Phase':'UAT Phase',
   'Deployment Approval L1':'Deployment Phase','Deployment Approval L2':'Deployment Phase',
   'Deployment Approval L3':'Deployment Phase',
+  'Observation Phase':'Development Phase',
 };
 
 function openSendBackModal(release) {
@@ -4882,6 +4897,25 @@ async function doUnhold() {
     toast(r.releaseNumber+' resumed', false, 'green');
     await openDetail(activeDetailId); renderDashboard();
   });
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// CLOSE CR (Observation phase — CR Owner only)
+// ══════════════════════════════════════════════════════════════════════
+async function closeCR() {
+  var r = _currentRelease; if (!r) return;
+  showConfirmModal(
+    'Close CR',
+    '<p>Close <strong>'+r.releaseNumber+'</strong>? This will move the CR from Observation to Closed.</p>',
+    'Close CR', '#15803d',
+    async function() {
+      var result = await PATCH('/releases/'+activeDetailId+'/close-cr', {});
+      if (!result) return;
+      showInfoModal('CR Closed', 'CR moved to <strong>Closed</strong>.', false, 'green');
+      _tlRows = null;
+      await openDetail(activeDetailId); renderDashboard();
+    }
+  );
 }
 // ══════════════════════════════════════════════════════════════════════
 
@@ -5166,6 +5200,7 @@ async function openCompanyMapping(companyId, companyName) {
     { code:'TESTING',    label:'Testing Phase' },
     { code:'UAT',        label:'UAT Phase' },
     { code:'DEPLOYMENT', label:'Deployment Phase' },
+    { code:'OBSERVATION', label:'Observation Phase' },
   ];
 
   var body = document.getElementById('input-modal-body');
@@ -6254,6 +6289,7 @@ async function editPhaseGroups(moduleId, moduleName, mod) {
     { code:'TESTING',    label:'Testing Phase' },
     { code:'UAT',        label:'UAT Phase' },
     { code:'DEPLOYMENT', label:'Deployment Phase' },
+    { code:'OBSERVATION', label:'Observation Phase' },
   ];
 
   // Build existing data: phaseGroupsAll from backend (multiple groups per phase)
@@ -6358,6 +6394,7 @@ async function editReviewers(moduleId, moduleName, mod) {
     {code:'RD', label:'RD Phase'}, {code:'FSD', label:'FSD Phase'},
     {code:'DEV', label:'Development Phase'}, {code:'TESTING', label:'Testing Phase'},
     {code:'UAT', label:'UAT Phase'}, {code:'DEPLOYMENT', label:'Deployment Phase'},
+    {code:'OBSERVATION', label:'Observation Phase'},
   ];
   var existing = (mod && mod.reviewersByPhase) || {};
 
@@ -6610,7 +6647,7 @@ async function editApprovalFlow(moduleId, moduleName) {
     '<div style="font-size:12px;font-weight:700;color:var(--grey-800);margin-bottom:6px">FSD Approval (FSD Phase → Development)</div>'+
     '<div id="fsd-flow-levels" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px"></div>'+
     '<button class="btn btn-outline btn-sm" id="add-fsd-btn" style="width:100%;margin-bottom:14px">+ Add FSD Level</button>'+
-    '<div style="font-size:12px;font-weight:700;color:var(--grey-800);margin-bottom:6px">Deployment Approval (Deployment → Closed)</div>'+
+    '<div style="font-size:12px;font-weight:700;color:var(--grey-800);margin-bottom:6px">Deployment Approval (Deployment → Observation)</div>'+
     '<div id="dep-flow-levels" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px"></div>'+
     '<button class="btn btn-outline btn-sm" id="add-dep-btn" style="width:100%">+ Add Deployment Level</button>';
 
@@ -6958,11 +6995,26 @@ function renderApprovalActions(release) {
       '<div style="font-size:12px;color:#7f1d1d">No further actions possible. All sub-tasks are now void.</div></div></div>';
     return;
   }
+  if (state === 'Observation Phase') {
+    var isCrOwnerObs = currentUser && release.crOwnerUserId &&
+      String(release.crOwnerUserId) === String(currentUser.userId);
+    container.innerHTML =
+      '<div style="padding:10px 14px;background:#e0f2f1;border:1px solid #80cbc4;border-radius:6px;display:flex;align-items:center;gap:8px">'+
+      '<span style="font-size:16px">👁</span>'+
+      '<div><div style="font-size:12px;font-weight:700;color:#00695c">Observation Phase</div>'+
+      '<div style="font-size:12px;color:#004d40">'+
+      (isCrOwnerObs
+        ? 'No approval required. Use Close CR when ready, or Send Back to Development if needed.'
+        : 'This CR is under observation by the CR Owner. No approval actions are required.')+
+      '</div></div></div>';
+    return;
+  }
   if (state === 'Closed') {
     container.innerHTML =
-      '<div style="padding:10px 14px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;display:flex;align-items:center;gap:8px">'+
+      '<div style="padding:10px 14px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+
       '<span style="font-size:16px">✅</span>'+
-      '<div style="font-size:12px;font-weight:700;color:#14532d">This CR has been Closed successfully.</div></div>';
+      '<div style="flex:1"><div style="font-size:12px;font-weight:700;color:#14532d">This CR has been Closed successfully.</div></div>'+
+      '</div>';
     return;
   }
 

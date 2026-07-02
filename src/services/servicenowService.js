@@ -106,6 +106,7 @@ const STATE_MAP = {
   'Deployment Awaiting Approval L4': { state: '-3', phase: 'authorize',    risk: '1', type: 'comprehensive' },
   'Deployment Awaiting Approval L5': { state: '-3', phase: 'authorize',    risk: '1', type: 'comprehensive' },
   'Deployment Phase':                { state: '-1', phase: 'implement',    risk: '1', type: 'comprehensive' },
+  'Observation Phase':               { state:  '0', phase: 'review',       risk: '2', type: 'comprehensive' },
   'Closed':                          { state:  '3', phase: 'close',        risk: '2', type: 'comprehensive' },
   'Cancelled':                       { state:  '4', phase: 'close',        risk: '2', type: 'comprehensive' },
   'On Hold':                         { state: '-3', phase: 'authorize',    risk: '2', type: 'comprehensive' },

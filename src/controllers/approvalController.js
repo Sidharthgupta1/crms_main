@@ -11,7 +11,7 @@ const AFTER_APPROVAL = {
   'DRAFT':      'RD Phase',
   'RD':         'FSD Phase',
   'FSD':        'Development Phase',
-  'DEPLOYMENT': 'Closed',
+  'DEPLOYMENT': 'Observation Phase',
 };
 
 function selectedApproverForLevel(selectedApproversByLevel, levelOrder, selectedApproverId) {
