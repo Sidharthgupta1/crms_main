@@ -8,7 +8,7 @@ function safe(s) { return String(s||'').replace(/'/g,"''"); }
 function num(n)  { return String(parseInt(n,10)||0); }
 
 const APPROVAL_PHASES = ['DRAFT','RD','FSD','DEPLOYMENT'];
-const ALL_PHASES      = ['DRAFT','RD','FSD','DEV','TESTING','UAT','DEPLOYMENT','OBSERVATION'];
+const ALL_PHASES      = ['DRAFT','RD','FSD','DEV','TESTING','UAT','DEPLOYMENT','DBA_DEPLOYMENT','OBSERVATION'];
 
 // ── GET /modules ──────────────────────────────────────────────────────
 async function getAll(req, res, next) {

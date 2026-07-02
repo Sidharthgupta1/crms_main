@@ -1349,7 +1349,6 @@ select.tl-cell {
       <div class="detail-tabs">
         <div class="detail-tab active" onclick="switchTab(this,'tab-overview')">Overview</div>
         <div class="detail-tab" onclick="switchTab(this,'tab-subtasks')">Sub-Tasks</div>
-        <div class="detail-tab" id="tab-dba-btn" onclick="switchTab(this,'tab-dba')" style="display:none">DBA Deployment <span id="dba-tab-badge" style="display:inline-block;background:#dc2626;color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:8px;vertical-align:middle;margin-left:3px">!</span></div>
         <div class="detail-tab" onclick="switchTab(this,'tab-comments')">Comments</div>
         <div class="detail-tab" onclick="switchTab(this,'tab-attachments')">Attachments</div>
         <div class="detail-tab" onclick="switchTab(this,'tab-history')">History</div>
@@ -1426,9 +1425,6 @@ select.tl-cell {
   </div>
 </div>
 <div class="detail-tab-content" id="tab-subtasks"><div id="subtasks-container" style="padding:4px 0"></div></div>
-<div class="detail-tab-content" id="tab-dba">
-  <div id="dba-container" style="padding:4px 0"></div>
-</div>
 <div class="detail-tab-content" id="tab-comments">
   <div class="comment-box">
     <div class="comment-list" id="comment-list"><div style="padding:20px;text-align:center;color:var(--grey-400);font-size:13px">No comments yet</div></div>
@@ -1542,6 +1538,7 @@ const STATES = [
   'Development Phase','Testing Phase','UAT Phase',
   'Deployment Approval L1','Deployment Approval L2','Deployment Approval L3',
   'Deployment Phase',
+  'DBA Deployment Phase',
   'Observation Phase',
   'On Hold','Closed','Cancelled'
 ];
@@ -1553,6 +1550,7 @@ const NEXT_STATE = {
   'Testing Phase':     'UAT Phase',
   'UAT Phase':         'Deployment Phase',
   'Deployment Phase':  null,
+  'DBA Deployment Phase': 'Observation Phase',
   'Observation Phase': null,
   'On Hold':           'Development Phase',
 };
@@ -1899,6 +1897,7 @@ function stateBadge(s) {
   else if (s === 'Testing Phase')                                         cls = 'badge-testing';
   else if (s === 'UAT Phase')                                             cls = 'badge-uat';
   else if (s === 'Deployment Phase')                                      cls = 'badge-deployment';
+  else if (s === 'DBA Deployment Phase')                                  cls = 'badge-deployment';
   else if (s.includes('Deployment Approval') || s.includes('Deployment Awaiting')) cls = 'badge-awaiting';
   else if (s === 'Observation Phase')                                    cls = 'badge-observation';
   else if (s === 'Closed')                                                cls = 'badge-closed';
@@ -2921,24 +2920,8 @@ async function openDetail(releaseId) {
     renderCrOwnerField(r);
   }, 50);
 
-  // Load sub-tasks, DBA tasks, comments, history
-  await Promise.all([ renderSubTasks(r), renderDBADeployment(r), renderComments(), renderHistory(r.history || []) ]);
-
-  // Show / hide the DBA Deployment tab — only visible in Deployment Phase
-  var dbaTabBtn = document.getElementById('tab-dba-btn');
-  var dbaTabBadge = document.getElementById('dba-tab-badge');
-  if (dbaTabBtn) {
-    var isDeploymentPhase = (r.state === 'Deployment Phase');
-    dbaTabBtn.style.display = isDeploymentPhase ? '' : 'none';
-    // Show red "!" badge if no closed DBA task exists yet
-    if (isDeploymentPhase && dbaTabBadge) {
-      var dbaTasks = (r.phaseTasks || []).filter(function(t) { return t.phaseCode === 'DBA_DEPLOYMENT'; });
-      var allDbaClosed = dbaTasks.length > 0 && dbaTasks.every(function(t) { return t.state === 'Closed'; });
-      dbaTabBadge.style.display = allDbaClosed ? 'none' : 'inline-block';
-    } else if (dbaTabBadge) {
-      dbaTabBadge.style.display = 'none';
-    }
-  }
+  // Load sub-tasks, comments, history
+  await Promise.all([ renderSubTasks(r), renderComments(), renderHistory(r.history || []) ]);
 
   // Reset to overview tab
   document.querySelectorAll('.detail-tab').forEach(t => t.classList.remove('active'));
@@ -2978,6 +2961,7 @@ function renderPhaseBar(cur) {
     'UAT Phase',
     'Deployment Approval',  // L1/L2 pre-deployment approval
     'Deployment Phase',
+    'DBA Deployment',
     'Observation',
     'Closed'
   ];
@@ -2993,6 +2977,7 @@ function renderPhaseBar(cur) {
     'UAT Phase':           'UAT',
     'Deployment Approval': 'Deploy Appvl',
     'Deployment Phase':    'Deployment',
+    'DBA Deployment':      'DBA Deploy',
     'Observation':         'Observation',
     'Closed':              'Closed',
   };
@@ -3009,6 +2994,7 @@ function renderPhaseBar(cur) {
   else if (cur2 === 'UAT Phase')                                         activeStep = 'UAT Phase';
   else if (cur2.includes('Deployment Approval')||cur2.includes('Deployment Awaiting')) activeStep = 'Deployment Approval';
   else if (cur2 === 'Deployment Phase')                                  activeStep = 'Deployment Phase';
+  else if (cur2 === 'DBA Deployment Phase')                              activeStep = 'DBA Deployment';
   else if (cur2 === 'Observation Phase')                                 activeStep = 'Observation';
   else if (cur2 === 'Closed' || cur2 === 'Cancelled')                   activeStep = 'Closed';
   else                                                                   activeStep = cur2;
@@ -3061,7 +3047,6 @@ function switchTab(el, tabId) {
   document.getElementById(tabId).classList.add('active');
   if (tabId === 'tab-attachments') renderAttachments();
   if (tabId === 'tab-subtasks')    renderSubTasksById(activeDetailId);
-  if (tabId === 'tab-dba')         renderDBADeploymentById(activeDetailId);
 }
 
 
@@ -3417,7 +3402,7 @@ function populateDownloadFilters() {
     'FSD Phase','FSD Awaiting Approval L1','FSD Awaiting Approval L2','FSD Awaiting Approval L3',
     'Development Phase','Testing Phase','UAT Phase',
     'Deployment Approval L1','Deployment Approval L2','Deployment Approval L3',
-    'Deployment Phase','Observation Phase','On Hold','Closed','Cancelled'
+    'Deployment Phase','DBA Deployment Phase','Observation Phase','On Hold','Closed','Cancelled'
   ];
   var PRIORITIES = [
     {v:'1',l:'1 – Critical'},{v:'2',l:'2 – High'},
@@ -4439,7 +4424,7 @@ function renderCrOwnerField(release) {
   var isLocked   = !!release.crOwnerUserId;
   var isFSDOrLater = ['FSD Phase','FSD Awaiting Approval L1','FSD Awaiting Approval L2',
     'FSD Awaiting Approval L3','Development Phase','Testing Phase','UAT Phase',
-    'Deployment Phase','Observation Phase','Closed','Cancelled'].indexOf(release.state) >= 0;
+    'Deployment Phase','DBA Deployment Phase','Observation Phase','Closed','Cancelled'].indexOf(release.state) >= 0;
 
   // Always show the wrap from FSD Phase onwards
   wrap.style.display = isFSDOrLater ? '' : 'none';
@@ -4853,6 +4838,7 @@ var SEND_BACK_MAP_FE = {
   'UAT Phase':'Testing Phase','Deployment Phase':'UAT Phase',
   'Deployment Approval L1':'Deployment Phase','Deployment Approval L2':'Deployment Phase',
   'Deployment Approval L3':'Deployment Phase',
+  'DBA Deployment Phase':'Deployment Phase',
   'Observation Phase':'Development Phase',
 };
 
@@ -5200,6 +5186,7 @@ async function openCompanyMapping(companyId, companyName) {
     { code:'TESTING',    label:'Testing Phase' },
     { code:'UAT',        label:'UAT Phase' },
     { code:'DEPLOYMENT', label:'Deployment Phase' },
+    { code:'DBA_DEPLOYMENT', label:'DBA Deployment Phase' },
     { code:'OBSERVATION', label:'Observation Phase' },
   ];
 
@@ -5516,8 +5503,8 @@ async function renderReviewerView(){
   var reviews=[];try{reviews=(await GET('/releases/reviews/my'))||[];}catch(e){}
   var badge=document.getElementById('reviewer-badge');if(badge){badge.textContent=reviews.length;badge.style.display=reviews.length?'':'none';}
   if(!reviews.length){wrap.innerHTML='<div class="table-wrap" style="padding:60px;text-align:center"><div style="font-size:36px;margin-bottom:12px">&#128065;</div><div style="font-size:15px;font-weight:700;color:var(--grey-700);margin-bottom:4px">No pending reviews</div></div>';return;}
-  var PC={'RD':'#C8102E','FSD':'#1565c0','DEV':'#1b5e20','TESTING':'#e65100','UAT':'#006064','DEPLOYMENT':'#1a237e'};
-  var PL={'RD':'RD Phase','FSD':'FSD Phase','DEV':'Development Phase','TESTING':'Testing Phase','UAT':'UAT Phase','DEPLOYMENT':'Deployment Phase'};
+  var PC={'RD':'#C8102E','FSD':'#1565c0','DEV':'#1b5e20','TESTING':'#e65100','UAT':'#006064','DEPLOYMENT':'#1a237e','DBA_DEPLOYMENT':'#1a237e'};
+  var PL={'RD':'RD Phase','FSD':'FSD Phase','DEV':'Development Phase','TESTING':'Testing Phase','UAT':'UAT Phase','DEPLOYMENT':'Deployment Phase','DBA_DEPLOYMENT':'DBA Deployment Phase'};
   var PCOL={'1':'#dc2626','2':'#d97706','3':'#2563eb','4':'#16a34a'};
   var PLBL={'1':'1-Critical','2':'2-High','3':'3-Moderate','4':'4-Low'};
   function fR(l,v){if(!v)return '';return '<div style="display:flex;gap:0;margin-bottom:0;border-bottom:1px solid var(--grey-100)"><div style="width:160px;flex-shrink:0;padding:7px 12px;background:var(--grey-50);font-size:11px;font-weight:700;color:var(--grey-500);text-transform:uppercase;border-right:1px solid var(--grey-200)">'+l+'</div><div style="flex:1;padding:7px 14px;font-size:13px;color:var(--grey-800)">'+v+'</div></div>';}
@@ -5613,7 +5600,13 @@ async function advanceState(force) {
     return;
   }
 
-  // Manual advance phases (Development → Testing → UAT → Deployment)
+  // DBA Deployment Phase — use doAdvance() which shows the same "Sub-Task Required" modal as FSD/Deployment
+  if (cur === 'DBA Deployment Phase') {
+    await doAdvance({});
+    return;
+  }
+
+  // Manual advance phases (Development → Testing → UAT)
   // Use _doAdvanceState which handles sub-task warnings
   await _doAdvanceState(null, false);
 }
@@ -6289,6 +6282,7 @@ async function editPhaseGroups(moduleId, moduleName, mod) {
     { code:'TESTING',    label:'Testing Phase' },
     { code:'UAT',        label:'UAT Phase' },
     { code:'DEPLOYMENT', label:'Deployment Phase' },
+    { code:'DBA_DEPLOYMENT', label:'DBA Deployment Phase' },
     { code:'OBSERVATION', label:'Observation Phase' },
   ];
 
@@ -6394,6 +6388,7 @@ async function editReviewers(moduleId, moduleName, mod) {
     {code:'RD', label:'RD Phase'}, {code:'FSD', label:'FSD Phase'},
     {code:'DEV', label:'Development Phase'}, {code:'TESTING', label:'Testing Phase'},
     {code:'UAT', label:'UAT Phase'}, {code:'DEPLOYMENT', label:'Deployment Phase'},
+    {code:'DBA_DEPLOYMENT', label:'DBA Deployment Phase'},
     {code:'OBSERVATION', label:'Observation Phase'},
   ];
   var existing = (mod && mod.reviewersByPhase) || {};
@@ -6497,6 +6492,7 @@ async function editProcessOwners(moduleId, moduleName, mod) {
     {code:'TESTING', label:'Testing Phase (after Dev advance)'},
     {code:'UAT', label:'UAT Phase (after Testing advance)'},
     {code:'DEPLOYMENT', label:'Deployment Phase (after UAT advance)'},
+    {code:'DBA_DEPLOYMENT', label:'DBA Deployment Phase (after Deploy Approval)'},
   ];
   var existing = (mod && mod.processOwnerByPhase) || {};
 
@@ -6647,7 +6643,7 @@ async function editApprovalFlow(moduleId, moduleName) {
     '<div style="font-size:12px;font-weight:700;color:var(--grey-800);margin-bottom:6px">FSD Approval (FSD Phase → Development)</div>'+
     '<div id="fsd-flow-levels" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px"></div>'+
     '<button class="btn btn-outline btn-sm" id="add-fsd-btn" style="width:100%;margin-bottom:14px">+ Add FSD Level</button>'+
-    '<div style="font-size:12px;font-weight:700;color:var(--grey-800);margin-bottom:6px">Deployment Approval (Deployment → Observation)</div>'+
+    '<div style="font-size:12px;font-weight:700;color:var(--grey-800);margin-bottom:6px">Deployment Approval (Deployment → DBA Deployment Phase)</div>'+
     '<div id="dep-flow-levels" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px"></div>'+
     '<button class="btn btn-outline btn-sm" id="add-dep-btn" style="width:100%">+ Add Deployment Level</button>';
 
@@ -6969,10 +6965,11 @@ async function checkApproverStatus() {
 // Phase label mapping for display
 var PHASE_CODE_FROM_STATE = {
   'RD Phase':'RD', 'FSD Phase':'FSD', 'Development Phase':'DEV',
-  'Testing Phase':'TESTING', 'UAT Phase':'UAT', 'Deployment Phase':'DEPLOYMENT'
+  'Testing Phase':'TESTING', 'UAT Phase':'UAT', 'Deployment Phase':'DEPLOYMENT',
+  'DBA Deployment Phase':'DBA_DEPLOYMENT'
 };
 var APPROVAL_PHASE_STATES = ['RD Phase','FSD Phase','Deployment Phase'];
-var ALL_ACTIVE_PHASES = ['RD Phase','FSD Phase','Development Phase','Testing Phase','UAT Phase','Deployment Phase'];
+var ALL_ACTIVE_PHASES = ['RD Phase','FSD Phase','Development Phase','Testing Phase','UAT Phase','Deployment Phase','DBA Deployment Phase'];
 
 function renderApprovalActions(release) {
   var container = document.getElementById('dm-approval-actions');
@@ -7302,8 +7299,7 @@ var _activeTaskId    = null;   // task currently open in detail panel
 // ── renderSubTasks — called when detail modal opens ──────────────────
 async function renderSubTasks(release) {
   _currentRelease = release;
-  // DBA Deployment tasks are shown exclusively in the DBA tab — exclude them here
-  var tasks = (release.phaseTasks || []).filter(function(t) { return t.phaseCode !== 'DBA_DEPLOYMENT'; });
+  var tasks = (release.phaseTasks || []);
   renderSubTasksFromData(tasks, release);
 }
 
@@ -7311,8 +7307,7 @@ async function renderSubTasksById(releaseId) {
   var r = await GET('/releases/' + releaseId);
   if (!r) return;
   _currentRelease = r;
-  // DBA Deployment tasks are shown exclusively in the DBA tab — exclude them here
-  var tasks = (r.phaseTasks || []).filter(function(t) { return t.phaseCode !== 'DBA_DEPLOYMENT'; });
+  var tasks = (r.phaseTasks || []);
   renderSubTasksFromData(tasks, r);
 }
 
@@ -7342,7 +7337,7 @@ function renderSubTasksFromData(tasks, release) {
     var ph2    = stateToPhaseCodeFE(release.state);
     var isRDph = (ph2 === 'RD');
     if (!isRDph) {
-      var phMap2  = {FSD:'FSD Phase',DEV:'Development Phase',TESTING:'Testing Phase',UAT:'UAT Phase',DEPLOYMENT:'Deployment Phase'};
+      var phMap2  = {FSD:'FSD Phase',DEV:'Development Phase',TESTING:'Testing Phase',UAT:'UAT Phase',DEPLOYMENT:'Deployment Phase',DBA_DEPLOYMENT:'DBA Deployment Phase'};
       var phName2 = phMap2[ph2] || release.state || 'current phase';
       html += '<div style="background:#fff7ed;border:1.5px solid #fed7aa;border-radius:var(--radius);padding:14px 18px;font-size:13px">' +
               '<div style="font-weight:700;color:#92400e;margin-bottom:6px">\u26a0 Sub-Task Required</div>' +
@@ -7706,7 +7701,8 @@ function openAddSubTask() {
 
   var phaseLabelsMap = {
     RD:'RD Task', FSD:'FSD Task', DEV:'Development Task',
-    TESTING:'Testing Task', UAT:'UAT Task', DEPLOYMENT:'Deployment Task'
+    TESTING:'Testing Task', UAT:'UAT Task', DEPLOYMENT:'Deployment Task',
+    DBA_DEPLOYMENT:'DBA Deployment Task'
   };
 
   // Auto-detect phase from current release state
@@ -8121,335 +8117,8 @@ async function downloadPhaseTemplate(moduleId, phaseCode) {
   toast('\u2193 RD template downloaded. Fill it and upload back to close your task.', false, 'green');
 }
 
-function stateToPhaseCodeFE(state) {
-  var m = {
-    'Draft':'DRAFT','RD Phase':'RD','FSD Phase':'FSD',
-    'Development Phase':'DEV','Testing Phase':'TESTING',
-    'UAT Phase':'UAT','Deployment Phase':'DEPLOYMENT',
-  };
-  return m[state] || null;
-}
-
-function sortSubTasks(col) {
-  var tbody = document.getElementById('subtasks-tbody');
-  if (!tbody) return;
-  var rows = Array.from(tbody.querySelectorAll('tr'));
-  rows.sort(function(a, b) { return a.cells[col].textContent.localeCompare(b.cells[col].textContent); });
-  rows.forEach(function(r) { tbody.appendChild(r); });
-}
-
-
 
 // ═══════════════════════════════════════════════════════════════════════
-// DBA DEPLOYMENT — mandatory sub-phase inside Deployment Phase
-// ═══════════════════════════════════════════════════════════════════════
-
-// ── renderDBADeployment — called when detail modal opens ─────────────
-async function renderDBADeployment(release) {
-  var dbaTasks = (release.phaseTasks || []).filter(function(t) { return t.phaseCode === 'DBA_DEPLOYMENT'; });
-  renderDBADeploymentFromData(dbaTasks, release);
-}
-
-async function renderDBADeploymentById(releaseId) {
-  var r = await GET('/releases/' + releaseId);
-  if (!r) return;
-  _currentRelease = r;
-  var dbaTasks = (r.phaseTasks || []).filter(function(t) { return t.phaseCode === 'DBA_DEPLOYMENT'; });
-  renderDBADeploymentFromData(dbaTasks, r);
-  // Refresh badge
-  var dbaTabBadge = document.getElementById('dba-tab-badge');
-  if (dbaTabBadge) {
-    var allClosed = dbaTasks.length > 0 && dbaTasks.every(function(t) { return t.state === 'Closed'; });
-    dbaTabBadge.style.display = allClosed ? 'none' : 'inline-block';
-  }
-}
-
-// ── Main DBA view: header + mandatory notice + table ─────────────────
-function renderDBADeploymentFromData(tasks, release) {
-  var container = document.getElementById('dba-container');
-  if (!container) return;
-
-  var isTerminal = ['Closed','Cancelled'].includes(release.state);
-  var isAwaiting = release.state && (release.state.includes('Awaiting') || release.state.includes('Approval L'));
-  var canCreate  = (release.state === 'Deployment Phase') && !isTerminal && !isAwaiting;
-
-  var allClosed  = tasks.length > 0 && tasks.every(function(t) { return t.state === 'Closed'; });
-  var anyOpen    = tasks.some(function(t) { return t.state !== 'Closed'; });
-
-  // ── Header ─────────────────────────────────────────────────────────
-  var html = '<div style="background:linear-gradient(135deg,#1e3a5f 0%,#0f2340 100%);border-radius:10px;padding:16px 20px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between">';
-  html += '<div>';
-  html += '<div style="color:#fff;font-size:14px;font-weight:700;letter-spacing:.3px;display:flex;align-items:center;gap:8px">🗄 DBA Deployment Phase';
-  html += '<span style="font-size:10px;font-weight:700;background:rgba(255,255,255,.15);color:#fff;padding:2px 8px;border-radius:10px;text-transform:uppercase;letter-spacing:.5px">Mandatory</span>';
-  html += '</div>';
-  html += '<div style="color:rgba(255,255,255,.65);font-size:12px;margin-top:4px">Sub-tasks must be created and closed before this CR can move to Closed</div>';
-  html += '</div>';
-  if (canCreate) {
-    html += '<button class="btn btn-sm" onclick="openAddDBASubTask()" style="background:#dc2626;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap">+ Add DBA Sub-Task</button>';
-  }
-  html += '</div>';
-
-  // Task count row
-  html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">';
-  html += '<div style="font-size:13px;font-weight:600;color:var(--grey-800)">DBA Sub-Tasks <span style="font-size:12px;font-weight:400;color:var(--grey-400)">('+tasks.length+' total)</span></div>';
-  if (tasks.length > 0) {
-    if (allClosed) {
-      html += '<span style="font-size:12px;font-weight:700;color:#15803d;background:#f0fdf4;border:1px solid #86efac;padding:3px 10px;border-radius:12px">✅ All DBA tasks closed — ready to close CR</span>';
-    } else {
-      html += '<span style="font-size:12px;font-weight:700;color:#92400e;background:#fff7ed;border:1px solid #fed7aa;padding:3px 10px;border-radius:12px">⚠ '+tasks.filter(function(t){return t.state!=='Closed';}).length+' task(s) still open</span>';
-    }
-  }
-  html += '</div>';
-
-  // ── Empty / warning state ───────────────────────────────────────────
-  if (!tasks.length) {
-    html += '<div style="background:#fef2f2;border:2px solid #fca5a5;border-radius:10px;padding:18px 22px">';
-    html += '<div style="font-weight:700;color:#991b1b;font-size:14px;margin-bottom:6px">⛔ DBA Deployment Sub-Task Required</div>';
-    html += '<div style="color:#7f1d1d;font-size:13px;line-height:1.5">You must create at least one DBA Deployment sub-task and close it before this CR can be moved to <strong>Closed</strong>.' +
-            (canCreate ? ' Click <strong>+ Add DBA Sub-Task</strong> above to get started.' : '') +
-            '</div>';
-    html += '</div>';
-    html += '<div id="dba-task-detail-panel" style="display:none;margin-top:16px;border:1px solid var(--grey-200);border-radius:var(--radius);overflow:hidden"></div>';
-    container.innerHTML = html;
-    return;
-  }
-
-  // ── Table ───────────────────────────────────────────────────────────
-  html += '<div class="table-wrap"><table>';
-  html += '<thead><tr>'+
-    '<th onclick="sortDBASubTasks(0)" style="cursor:pointer">Number ▲</th>'+
-    '<th>Type</th>'+
-    '<th>State</th>'+
-    '<th>Short Description</th>'+
-    '<th>Assignment Group</th>'+
-    '<th>Assigned To</th>'+
-    '</tr></thead>';
-  html += '<tbody id="dba-subtasks-tbody">';
-
-  tasks.forEach(function(t) {
-    var stateCls = t.state === 'Closed' ? 'badge-closed' : 'badge-brd';
-    var rowBg    = t.state === 'Closed' ? 'background:#fafafa;' : '';
-    html += '<tr style="'+rowBg+'cursor:pointer" onclick="openDBASubTaskDetail('+t.taskId+')" title="Click to view/edit">';
-    html += '<td><a class="cr-link" onclick="event.stopPropagation();openDBASubTaskDetail('+t.taskId+')">'+t.taskNumber+'</a></td>';
-    html += '<td><span style="font-size:11px">'+t.taskType+'</span></td>';
-    html += '<td><span class="badge '+stateCls+'">'+t.state+'</span></td>';
-    html += '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+t.shortDescription+'">'+t.shortDescription+'</td>';
-    html += '<td style="color:var(--grey-500);font-size:12px">'+(t.assignmentGroup||'—')+'</td>';
-    html += '<td style="font-size:12px">'+(t.assignedTo||'<em style="color:var(--grey-400)">(empty)</em>')+'</td>';
-    html += '</tr>';
-  });
-
-  html += '</tbody></table></div>';
-  html += '<div id="dba-task-detail-panel" style="display:none;margin-top:16px;border:1px solid var(--grey-200);border-radius:var(--radius);overflow:hidden"></div>';
-  container.innerHTML = html;
-}
-
-// ── Open DBA sub-task detail (reuses existing renderTaskDetailPanel) ──
-async function openDBASubTaskDetail(taskId) {
-  document.querySelectorAll('#dba-subtasks-tbody tr').forEach(function(r) { r.style.background = ''; });
-  document.querySelectorAll('#dba-subtasks-tbody tr').forEach(function(r) {
-    if (r.onclick && r.onclick.toString().includes(taskId)) r.style.background = '#fef3c7';
-  });
-
-  _activeTaskId = taskId;
-  var panel = document.getElementById('dba-task-detail-panel');
-  if (!panel) return;
-  panel.style.display = 'block';
-  panel.innerHTML = '<div style="padding:20px;color:var(--grey-400);font-size:13px">Loading…</div>';
-
-  var tasks = _currentRelease && _currentRelease.phaseTasks;
-  var task  = tasks && tasks.find(function(t) { return Number(t.taskId) === Number(taskId); });
-  if (!task) {
-    var r = await GET('/releases/' + activeDetailId);
-    if (!r) return;
-    _currentRelease = r;
-    task = r.phaseTasks && r.phaseTasks.find(function(t) { return Number(t.taskId) === Number(taskId); });
-  }
-  if (!task) { panel.innerHTML = '<div style="padding:20px;color:var(--red)">Task not found</div>'; return; }
-
-  // Override close button to refresh DBA tab
-  renderTaskDetailPanel(task, panel);
-  // Patch the Close Task button to refresh DBA tab on close
-  setTimeout(function() {
-    var closeBtn = panel.querySelector('button[onclick*="closeSubTask"]');
-    if (closeBtn) {
-      var origOnclick = closeBtn.getAttribute('onclick');
-      closeBtn.setAttribute('onclick', origOnclick.replace('closeSubTask(', 'closeDBASubTask('));
-    }
-  }, 50);
-}
-
-// Close DBA sub-task and refresh DBA tab (not main subtasks tab)
-async function closeDBASubTask(taskId) {
-  if (!confirm('Close this DBA sub-task? This action cannot be undone.')) return;
-  var res = await api('PATCH', '/releases/' + activeDetailId + '/phase-tasks/' + taskId + '/close', {});
-  if (!res) return;
-  toast('✅ DBA sub-task closed!', false, 'green');
-  await renderDBADeploymentById(activeDetailId);
-  // Refresh state badge and approval actions in case this unlocks CR advance
-  var r2 = _currentRelease;
-  if (r2) {
-    renderApprovalActions(r2);
-    renderPhaseBar(r2.state);
-    var stateBadgeEl = document.getElementById('dm-state-badge');
-    if (stateBadgeEl) stateBadgeEl.innerHTML = stateBadge(r2.state);
-  }
-  // Re-open the detail panel for this task
-  setTimeout(function() { openDBASubTaskDetail(taskId); }, 100);
-}
-
-
-function closeDBATaskDetailPanel() {
-  var panel = document.getElementById('dba-task-detail-panel');
-  if (panel) { panel.style.display = 'none'; panel.innerHTML = ''; }
-  _activeTaskId = null;
-  document.querySelectorAll('#dba-subtasks-tbody tr').forEach(function(r) { r.style.background = ''; });
-}
-
-function sortDBASubTasks(col) {
-  var tbody = document.getElementById('dba-subtasks-tbody');
-  if (!tbody) return;
-  var rows = Array.from(tbody.querySelectorAll('tr'));
-  rows.sort(function(a, b) { return a.cells[col].textContent.localeCompare(b.cells[col].textContent); });
-  rows.forEach(function(r) { tbody.appendChild(r); });
-}
-
-// ── Add DBA Sub-Task modal ────────────────────────────────────────────
-function openAddDBASubTask() {
-  var release = _currentRelease;
-  if (!release) return;
-  if (release.state !== 'Deployment Phase') {
-    toast('DBA Deployment sub-tasks can only be created during the Deployment Phase', true);
-    return;
-  }
-
-  document.getElementById('input-modal-title').textContent = 'Add DBA Deployment Sub-Task';
-
-  // Build group list — use phase mapping for DBA if available, else all groups
-  var relAgId  = String(release.assignmentGroupId || '');
-  var moduleId = String(release.moduleId || '');
-  var mod = moduleId ? (REF.modules || []).find(function(m) { return String(m.moduleId) === moduleId; }) : null;
-  var phaseGroups = [];
-  if (mod) {
-    var all = mod.phaseGroupsAll || {};
-    if (all['DBA_DEPLOYMENT'] && all['DBA_DEPLOYMENT'].length) phaseGroups = all['DBA_DEPLOYMENT'];
-    else if (all['DEPLOYMENT'] && all['DEPLOYMENT'].length)    phaseGroups = all['DEPLOYMENT'];
-    else if (mod.phaseGroups && mod.phaseGroups['DBA_DEPLOYMENT']) phaseGroups = [mod.phaseGroups['DBA_DEPLOYMENT']];
-  }
-  var groupsForPhase = phaseGroups.length ? phaseGroups : REF.groups;
-  if (!groupsForPhase.length) groupsForPhase = REF.groups;
-
-  var grpOptions = groupsForPhase.map(function(g) {
-    var sel = String(g.groupId) === relAgId ? ' selected' : '';
-    return '<option value="' + g.groupId + '"' + sel + '>' + g.groupName + '</option>';
-  }).join('');
-
-  document.getElementById('input-modal-body').innerHTML =
-    '<div style="background:linear-gradient(135deg,#1e3a5f,#0f2340);border-radius:8px;padding:12px 16px;margin-bottom:16px">' +
-    '<div style="color:#fff;font-size:13px;font-weight:700">🗄 DBA Deployment Sub-Task</div>' +
-    '<div style="color:rgba(255,255,255,.7);font-size:11px;margin-top:3px">This sub-task must be closed before the CR can move to Closed state</div>' +
-    '</div>' +
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">' +
-
-    // Type — read-only
-    '<div class="form-field">' +
-    '<label>Type</label>' +
-    '<input value="DBA Deployment Task" readonly style="background:var(--grey-50);color:var(--grey-600);font-weight:600" />' +
-    '<input type="hidden" id="dba-st-phase" value="DBA_DEPLOYMENT" />' +
-    '</div>' +
-
-    // Priority
-    '<div class="form-field">' +
-    '<label>Priority</label>' +
-    '<select id="dba-st-priority">' +
-    '<option value="">— Select —</option>' +
-    '<option value="1">1 - Critical</option>' +
-    '<option value="2">2 - High</option>' +
-    '<option value="3">3 - Moderate</option>' +
-    '<option value="4">4 - Low</option>' +
-    '</select></div>' +
-
-    // Assignment Group
-    '<div class="form-field">' +
-    '<label>Assignment Group <span class="req">*</span></label>' +
-    '<select id="dba-st-ag" onchange="loadDBASubTaskMembers()">' +
-    '<option value="">— Select group —</option>' + grpOptions +
-    '</select></div>' +
-
-    // Assigned To
-    '<div class="form-field">' +
-    '<label>Assigned To <span class="req">*</span></label>' +
-    '<select id="dba-st-at"><option value="">— Select person —</option></select>' +
-    '</div>' +
-
-    // Short Description
-    '<div class="form-field full" style="grid-column:1/-1">' +
-    '<label>Short Description <span class="req">*</span></label>' +
-    '<input id="dba-st-desc" placeholder="Brief description of the DBA task" />' +
-    '</div>' +
-
-    // Description
-    '<div class="form-field" style="grid-column:1/-1">' +
-    '<label>Description</label>' +
-    '<textarea id="dba-st-longdesc" placeholder="Detailed description (optional)" style="min-height:60px;resize:vertical"></textarea>' +
-    '</div>' +
-    '</div>';
-
-  document.getElementById('input-modal-save').textContent = 'Create DBA Sub-Task';
-  document.getElementById('input-modal-save').onclick = saveDBASubTask;
-  openModal('input-modal');
-  setTimeout(loadDBASubTaskMembers, 50);
-}
-
-function loadDBASubTaskMembers() {
-  var gid   = (document.getElementById('dba-st-ag')  || {}).value;
-  var group = REF.groups.find(function(g) { return String(g.groupId) === gid; });
-  var sel   = document.getElementById('dba-st-at');
-  if (!sel) return;
-  sel.innerHTML = '<option value="">— Select person —</option>';
-  if (group && group.members && group.members.length) {
-    group.members.forEach(function(m) {
-      if (m.userId && m.fullName) {
-        var o = document.createElement('option');
-        o.value = m.userId; o.textContent = m.fullName; sel.appendChild(o);
-      }
-    });
-  }
-}
-
-async function saveDBASubTask() {
-  try {
-    var phaseCode = 'DBA_DEPLOYMENT';
-    var agId      = ((document.getElementById('dba-st-ag')       || {}).value || '');
-    var atId      = ((document.getElementById('dba-st-at')       || {}).value || '');
-    var priority  = ((document.getElementById('dba-st-priority') || {}).value || '');
-    var shortDesc = (((document.getElementById('dba-st-desc')    || {}).value || '')).trim();
-    var longDesc  = (((document.getElementById('dba-st-longdesc')|| {}).value || '')).trim();
-
-    if (!shortDesc) { toast('Short description is required', true); return; }
-    if (!agId)      { toast('Please select an assignment group', true); return; }
-
-    _tlRows = null;
-    var result = await POST('/releases/' + activeDetailId + '/phase-tasks', {
-      phaseCode:        phaseCode,
-      shortDescription: shortDesc,
-      description:      longDesc,
-      assignmentGroupId: agId ? parseInt(agId) : undefined,
-      assignedToUserId:  atId ? parseInt(atId) : undefined,
-      priority:         priority || undefined,
-    });
-    if (!result) return;
-    toast('✅ DBA sub-task created!', false, 'green');
-    closeModal('input-modal');
-    await renderDBADeploymentById(activeDetailId);
-    // Switch to DBA tab so user sees the new task
-    var dbaTabBtn = document.getElementById('tab-dba-btn');
-    if (dbaTabBtn) switchTab(dbaTabBtn, 'tab-dba');
-  } catch(e) {
-    toast('Error creating DBA sub-task: ' + (e.message || e), true);
-  }
-}
-
 // ═══════════════════════════════════════════════════════════════════════
 // MY PHASE TASKS — dashboard widget showing open RTSK tasks for user
 
@@ -8486,6 +8155,7 @@ function stateToPhaseCodeFE(state) {
     'Draft':'DRAFT','RD Phase':'RD','FSD Phase':'FSD',
     'Development Phase':'DEV','Testing Phase':'TESTING',
     'UAT Phase':'UAT','Deployment Phase':'DEPLOYMENT',
+    'DBA Deployment Phase':'DBA_DEPLOYMENT',
   };
   return m[state] || null;
 }

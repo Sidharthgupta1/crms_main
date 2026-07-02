@@ -11,7 +11,7 @@ const AFTER_APPROVAL = {
   'DRAFT':      'RD Phase',
   'RD':         'FSD Phase',
   'FSD':        'Development Phase',
-  'DEPLOYMENT': 'Observation Phase',
+  'DEPLOYMENT': 'DBA Deployment Phase',
 };
 
 function selectedApproverForLevel(selectedApproversByLevel, levelOrder, selectedApproverId) {
@@ -427,7 +427,7 @@ async function approve(req, res, next) {
         if (release.MODULE_ID) {
           const midStr = num(release.MODULE_ID);
           // RD approved → FSD phase; FSD approved → DEV; etc.
-          const phaseToNext = { 'RD':'FSD', 'FSD':'DEV', 'DEV':'TESTING', 'TESTING':'UAT', 'UAT':'DEPLOYMENT' };
+          const phaseToNext = { 'RD':'FSD', 'FSD':'DEV', 'DEV':'TESTING', 'TESTING':'UAT', 'UAT':'DEPLOYMENT', 'DEPLOYMENT':'DBA_DEPLOYMENT' };
           const nextPhaseCode = phaseToNext[phaseCode];
           if (nextPhaseCode) {
             const po = await db.queryOne(
@@ -621,6 +621,7 @@ function phaseCodeToState(code) {
     'DRAFT':'Draft', 'RD':'RD Phase', 'FSD':'FSD Phase',
     'DEV':'Development Phase', 'TESTING':'Testing Phase',
     'UAT':'UAT Phase', 'DEPLOYMENT':'Deployment Phase',
+    'DBA_DEPLOYMENT':'DBA Deployment Phase',
   };
   return map[code] || code;
 }

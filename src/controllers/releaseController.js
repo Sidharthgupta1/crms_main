@@ -29,11 +29,11 @@ function safeDate(d) {
 
 const TERMINAL_STATES = ['Closed','Cancelled'];
 
-// ── Lifecycle: RD → RD Approval → FSD → FSD Approval → Dev → Testing → UAT → Deployment Approval → Observation → Closed
+// ── Lifecycle: RD → RD Approval → FSD → FSD Approval → Dev → Testing → UAT → Deployment Approval → DBA Deployment → Observation → Closed
 const AFTER_APPROVAL = {
   RD:         'FSD Phase',
   FSD:        'Development Phase',
-  DEPLOYMENT: 'Observation Phase',  // after all Deployment approval levels → Observation (no approval)
+  DEPLOYMENT: 'DBA Deployment Phase',  // after Deployment approval → DBA Deployment Phase
 };
 
 // Manual advances (no approval gate, but sub-task required)
@@ -41,6 +41,7 @@ const MANUAL_ADVANCE = {
   'Development Phase': 'Testing Phase',
   'Testing Phase':     'UAT Phase',
   'UAT Phase':         'Deployment Phase',
+  'DBA Deployment Phase': 'Observation Phase',
 };
 
 // Phase code ↔ state
@@ -49,12 +50,13 @@ function stateToPhaseCode(state) {
     'RD Phase':'RD', 'FSD Phase':'FSD',
     'Development Phase':'DEV', 'Testing Phase':'TESTING',
     'UAT Phase':'UAT', 'Deployment Phase':'DEPLOYMENT',
+    'DBA Deployment Phase':'DBA_DEPLOYMENT',
     'Observation Phase':'OBSERVATION',
   };
   return m[state] || null;
 }
 function phaseToState(code) {
-  const m = { RD:'RD Phase',FSD:'FSD Phase',DEV:'Development Phase',TESTING:'Testing Phase',UAT:'UAT Phase',DEPLOYMENT:'Deployment Phase',OBSERVATION:'Observation Phase' };
+  const m = { RD:'RD Phase',FSD:'FSD Phase',DEV:'Development Phase',TESTING:'Testing Phase',UAT:'UAT Phase',DEPLOYMENT:'Deployment Phase',DBA_DEPLOYMENT:'DBA Deployment Phase',OBSERVATION:'Observation Phase' };
   return m[code] || code;
 }
 function phaseLabel(code) {
@@ -141,6 +143,48 @@ async function ensureReleaseTaskSchema() {
     var msg = String(err.message || '');
     if (msg.indexOf('ORA-02264') === -1 && msg.indexOf('ORA-01442') === -1) {
       logger.warn('Could not update phase_code CHECK constraint', { err: msg.split('\n')[0] });
+    }
+  }
+  // Ensure chk_release_state allows DBA Deployment Phase
+  try {
+    try {
+      await db.executeWithCommit('ALTER TABLE crms_releases DROP CONSTRAINT chk_release_state', {});
+      logger.info('Dropped CHECK constraint: chk_release_state');
+    } catch (e1) { /* may not exist */ }
+    // Find and drop any other state constraint
+    var stateCons;
+    try {
+      stateCons = await db.queryAll(
+        "SELECT constraint_name FROM user_constraints WHERE table_name='CRMS_RELEASES' AND constraint_type='C' AND UPPER(search_condition) LIKE '%STATE%'", {}
+      );
+    } catch (e2) { stateCons = []; }
+    for (var sc = 0; sc < stateCons.length; sc++) {
+      try {
+        await db.executeWithCommit('ALTER TABLE crms_releases DROP CONSTRAINT ' + stateCons[sc].CONSTRAINT_NAME, {});
+        logger.info('Dropped state CHECK constraint: ' + stateCons[sc].CONSTRAINT_NAME);
+      } catch (e) { /* ignore */ }
+    }
+    await db.executeWithCommit(
+      "ALTER TABLE crms_releases ADD CONSTRAINT chk_release_state CHECK (state IN ("+
+      "'RD Phase','RD Awaiting Approval L1','RD Awaiting Approval L2','RD Awaiting Approval L3',"+
+      "'RD Awaiting Approval L4','RD Awaiting Approval L5',"+
+      "'RD Approval L1','RD Approval L2','RD Approval L3','RD Approval L4','RD Approval L5',"+
+      "'FSD Phase','FSD Awaiting Approval L1','FSD Awaiting Approval L2','FSD Awaiting Approval L3',"+
+      "'FSD Awaiting Approval L4','FSD Awaiting Approval L5',"+
+      "'FSD Approval L1','FSD Approval L2','FSD Approval L3','FSD Approval L4','FSD Approval L5',"+
+      "'Development Phase','Testing Phase','UAT Phase',"+
+      "'Deployment Phase',"+
+      "'Deployment Approval L1','Deployment Approval L2','Deployment Approval L3',"+
+      "'Deployment Approval L4','Deployment Approval L5',"+
+      "'DBA Deployment Phase',"+
+      "'Observation Phase',"+
+      "'On Hold','Closed','Cancelled'))", {}
+    );
+    logger.info('Created CHECK constraint allowing DBA Deployment Phase');
+  } catch (err) {
+    var msg = String(err.message || '');
+    if (msg.indexOf('ORA-02264') === -1 && msg.indexOf('ORA-01442') === -1) {
+      logger.warn('Could not update state CHECK constraint', { err: msg.split('\n')[0] });
     }
   }
 }
@@ -803,21 +847,6 @@ async function advanceState(req, res, next) {
           error:'Sub-task '+openTask.TASK_NUMBER+' is still open. Close it before submitting for approval.'
         });
       }
-      // DBA Deployment gate — only for Deployment Phase
-      if (phaseCode === 'DEPLOYMENT') {
-        const dbaTask = await db.queryOne(
-          "SELECT task_id FROM crms_release_tasks WHERE release_id="+rid+" AND phase_code='DBA_DEPLOYMENT' FETCH FIRST 1 ROWS ONLY", {}
-        );
-        if (!dbaTask) return res.status(400).json({
-          error:'At least one DBA Deployment sub-task must be created before submitting for approval. Go to the "DBA Deployment" tab to create one.'
-        });
-        const openDBA = await db.queryOne(
-          "SELECT task_id,task_number FROM crms_release_tasks WHERE release_id="+rid+" AND phase_code='DBA_DEPLOYMENT' AND state='Open' FETCH FIRST 1 ROWS ONLY", {}
-        );
-        if (openDBA) return res.status(400).json({
-          error:'DBA Deployment sub-task '+openDBA.TASK_NUMBER+' is still open. Please close it before submitting for approval.'
-        });
-      }
       // Trigger approval — pass selected approver if provided
       const r = await getApprCtrl().triggerApproval(
         rid, relNum, uid, modId, phaseCode, selectedApproverId, selectedApproversByLevel
@@ -867,14 +896,20 @@ async function advanceState(req, res, next) {
 
     // Manual advance phases (sub-task required)
     if (MANUAL_ADVANCE[cur]) {
-      const phaseMap = { 'Development Phase':'DEV','Testing Phase':'TESTING','UAT Phase':'UAT' };
+      const phaseMap = { 'Development Phase':'DEV','Testing Phase':'TESTING','UAT Phase':'UAT','DBA Deployment Phase':'DBA_DEPLOYMENT' };
       const checkPhase = phaseMap[cur];
       if (checkPhase) {
         const anyTask2 = await db.queryOne(
           "SELECT task_id FROM crms_release_tasks WHERE release_id="+rid+" AND phase_code='"+checkPhase+"' FETCH FIRST 1 ROWS ONLY", {}
         );
         if (!anyTask2) {
-          // No sub-task created — soft warning, allow advance if user confirms
+          // DBA Deployment Phase — sub-task is MANDATORY, no bypass allowed
+          if (cur === 'DBA Deployment Phase') {
+            return res.status(400).json({
+              error: 'A DBA Deployment sub-task must be created and closed before advancing to Observation Phase.'
+            });
+          }
+          // Other phases — soft warning, allow advance if user confirms
           if (!(req.body && req.body.confirmed)) {
             return res.json({
               warning: true,
@@ -1237,6 +1272,7 @@ async function writeStateChange(rid,relNum,fromState,toState,uid,assignedUserId)
     'UAT Phase':'UAT',
     'Deployment Phase':'DEPLOYMENT','Deployment Approval L1':'DEPLOYMENT',
     'Deployment Approval L2':'DEPLOYMENT','Deployment Approval L3':'DEPLOYMENT',
+    'DBA Deployment Phase':'DBA_DEPLOYMENT',
     'Observation Phase':'OBSERVATION',
   };
   const newPhaseCode = stateToPhase[toState];
@@ -1261,8 +1297,14 @@ async function writeStateChange(rid,relNum,fromState,toState,uid,assignedUserId)
       );
       if (phaseTask && phaseTask.ASSIGNED_TO) {
         assignedUserId = num(phaseTask.ASSIGNED_TO);
+      } else {
+        // No sub-task assignee — reset so the downstream fallback (Process Owner → L1 approver) runs
+        assignedUserId = null;
       }
-    } catch(e) { /* table may not exist */ }
+    } catch(e) {
+      // Table may not exist — reset so Process Owner / L1 approver fallback is attempted
+      assignedUserId = null;
+    }
   }
 
   // If no sub-task assignee found, fall back to Process Owner from module config
@@ -1642,7 +1684,7 @@ async function setCrOwner(req, res, next) {
     // Only settable from FSD Phase onwards
     const allowedStates = ['FSD Phase','FSD Awaiting Approval L1','FSD Awaiting Approval L2',
       'FSD Awaiting Approval L3','Development Phase','Testing Phase','UAT Phase',
-      'Deployment Phase','Observation Phase','Closed'];
+      'Deployment Phase','DBA Deployment Phase','Observation Phase','Closed'];
     if (!allowedStates.includes(release.STATE)) {
       return res.status(400).json({ error: 'CR Owner can only be set from FSD Phase onwards' });
     }
@@ -1748,6 +1790,7 @@ const SEND_BACK_MAP = {
   'Deployment Approval L1':   'Deployment Phase',
   'Deployment Approval L2':   'Deployment Phase',
   'Deployment Approval L3':   'Deployment Phase',
+  'DBA Deployment Phase':     'Deployment Phase',
   'Observation Phase':        'Development Phase',
   'On Hold':                  null,  // special — unhold
 };
