@@ -280,6 +280,7 @@ async function updatePhaseDate(crNumber, toState, approverNameOrUid) {
       'Deployment Approval L2':   { approved2On: today, stage: 'MOVEMENT APPROVAL' },
       'Deployment Approval L3':   { approved3On: today, stage: 'MOVEMENT APPROVAL' },
       'Deployment Phase':         { deployedSamil: today, stage: 'DEPLOYMENT' },
+      'Observation Phase':        { stage: 'UNDER OBSERVATION' },
       'Closed':                   { deployedMswil: today, stage: 'DEPLOYMENT', status: 'COMPLETE' },
       'Cancelled':                { stage: 'DROP', status: 'DROP' },
       'On Hold':                  { stage: 'FOLLOW UP' },
@@ -580,6 +581,7 @@ async function getLiveTaskList(req, res, next) {
       'Deployment Approval L2':'MOVEMENT APPROVAL',
       'Deployment Approval L3':'MOVEMENT APPROVAL',
       'Deployment Phase':'DEPLOYMENT',
+      'Observation Phase':'UNDER OBSERVATION',
       'Closed':'DEPLOYMENT','Cancelled':'DROP','On Hold':'FOLLOW UP',
     };
 

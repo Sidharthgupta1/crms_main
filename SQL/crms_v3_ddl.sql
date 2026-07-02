@@ -74,6 +74,7 @@ BEGIN
       'Deployment Awaiting Approval L3','Deployment Awaiting Approval L4',
       'Deployment Awaiting Approval L5',
       'Deployment Phase',
+      'Observation Phase',
       'On Hold','Closed','Cancelled'
     ))]';
     DBMS_OUTPUT.PUT_LINE('  CREATED : chk_release_state V2');
