@@ -58,7 +58,7 @@ function phaseToState(code) {
   return m[code] || code;
 }
 function phaseLabel(code) {
-  const m = { RD:'RD Task',FSD:'FSD Task',DEV:'Development Task',TESTING:'Testing Task',UAT:'UAT Task',DEPLOYMENT:'Deployment Task',OBSERVATION:'Observation Task' };
+  const m = { RD:'RD Task',FSD:'FSD Task',DEV:'Development Task',TESTING:'Testing Task',UAT:'UAT Task',DEPLOYMENT:'Deployment Task',DBA_DEPLOYMENT:'DBA Deployment Task',OBSERVATION:'Observation Task' };
   return m[code] || code+' Task';
 }
 
@@ -85,6 +85,7 @@ async function ensureReleaseTaskSchema() {
     ['ACTUAL_END_DATE', 'DATE'],
     ['ASSIGNMENT_GROUP_ID', 'NUMBER'],
     ['PRIORITY', 'VARCHAR2(1)'],
+    ['SHORT_DESCRIPTION', 'VARCHAR2(500)'],
     ['DESCRIPTION', 'CLOB'],
     ['REASON_FOR_REJECT', 'VARCHAR2(500)'],
     ['DELAY_REASON', 'VARCHAR2(2000)'],
@@ -104,6 +105,42 @@ async function ensureReleaseTaskSchema() {
       if (msg.indexOf('ORA-01430') === -1 && msg.indexOf('ORA-01442') === -1) {
         logger.warn('Could not add crms_release_tasks.' + col, { err: msg.split('\n')[0] });
       }
+    }
+  }
+
+  // Drop old phase_code CHECK constraint and recreate with DBA_DEPLOYMENT
+  // Oracle stores search_condition in UPPERCASE, so use UPPER() for case-insensitive match
+  try {
+    // Try known constraint name first
+    try {
+      await db.executeWithCommit('ALTER TABLE crms_release_tasks DROP CONSTRAINT chk_rt_phase', {});
+      logger.info('Dropped CHECK constraint: chk_rt_phase');
+    } catch (e1) { /* may not exist */ }
+
+    // Also find and drop any other CHECK constraint referencing PHASE_CODE
+    var cons;
+    try {
+      cons = await db.queryAll(
+        "SELECT constraint_name FROM user_constraints WHERE table_name='CRMS_RELEASE_TASKS' AND constraint_type='C' AND UPPER(search_condition) LIKE '%PHASE_CODE%'", {}
+      );
+    } catch (e2) {
+      cons = [];
+    }
+    for (var c = 0; c < cons.length; c++) {
+      try {
+        await db.executeWithCommit('ALTER TABLE crms_release_tasks DROP CONSTRAINT ' + cons[c].CONSTRAINT_NAME, {});
+        logger.info('Dropped CHECK constraint: ' + cons[c].CONSTRAINT_NAME);
+      } catch (e) { /* ignore */ }
+    }
+
+    await db.executeWithCommit(
+      "ALTER TABLE crms_release_tasks ADD CONSTRAINT chk_rt_phase CHECK (phase_code IN ('RD','FSD','DEV','TESTING','UAT','DEPLOYMENT','DBA_DEPLOYMENT'))", {}
+    );
+    logger.info('Created CHECK constraint allowing DBA_DEPLOYMENT');
+  } catch (err) {
+    var msg = String(err.message || '');
+    if (msg.indexOf('ORA-02264') === -1 && msg.indexOf('ORA-01442') === -1) {
+      logger.warn('Could not update phase_code CHECK constraint', { err: msg.split('\n')[0] });
     }
   }
 }
@@ -764,6 +801,21 @@ async function advanceState(req, res, next) {
         );
         if (openTask) return res.status(400).json({
           error:'Sub-task '+openTask.TASK_NUMBER+' is still open. Close it before submitting for approval.'
+        });
+      }
+      // DBA Deployment gate — only for Deployment Phase
+      if (phaseCode === 'DEPLOYMENT') {
+        const dbaTask = await db.queryOne(
+          "SELECT task_id FROM crms_release_tasks WHERE release_id="+rid+" AND phase_code='DBA_DEPLOYMENT' FETCH FIRST 1 ROWS ONLY", {}
+        );
+        if (!dbaTask) return res.status(400).json({
+          error:'At least one DBA Deployment sub-task must be created before submitting for approval. Go to the "DBA Deployment" tab to create one.'
+        });
+        const openDBA = await db.queryOne(
+          "SELECT task_id,task_number FROM crms_release_tasks WHERE release_id="+rid+" AND phase_code='DBA_DEPLOYMENT' AND state='Open' FETCH FIRST 1 ROWS ONLY", {}
+        );
+        if (openDBA) return res.status(400).json({
+          error:'DBA Deployment sub-task '+openDBA.TASK_NUMBER+' is still open. Please close it before submitting for approval.'
         });
       }
       // Trigger approval — pass selected approver if provided
