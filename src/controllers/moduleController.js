@@ -21,7 +21,8 @@ async function getAll(req, res, next) {
     for (const m of modules) {
       const mid = num(m.MODULE_ID);
 
-      // Phase groups (DRAFT,RD,FSD,DEV,TESTING,UAT,DEPLOYMENT)
+      // Phase groups — auto-create rows for any phases missing in CRMS_PHASE_GROUPS
+      await ensurePhaseGroupRows(mid);
       const groups = await db.query(
         "SELECT pg.phase_code,ag.group_id,ag.group_name "+
         "FROM crms_phase_groups pg "+
@@ -505,8 +506,51 @@ async function setPhaseProcessOwner(req, res, next) {
   } catch(err) { next(err); }
 }
 
+// ── ensurePhaseGroupRows — auto-create missing phase group entries for a module ──
+async function ensurePhaseGroupRows(moduleId) {
+  try {
+    const mid = num(moduleId);
+    if (!mid || mid === '0') return;
+
+    // Count existing phase groups for this module
+    const existing = await db.query(
+      "SELECT phase_code FROM crms_phase_groups WHERE module_id="+mid, {}
+    );
+    const existingCodes = new Set(existing.map(function(r) { return r.PHASE_CODE; }));
+
+    // Find which phases from ALL_PHASES are missing
+    const missing = ALL_PHASES.filter(function(pc) { return !existingCodes.has(pc); });
+    if (!missing.length) return;
+
+    // Find the first group_id already assigned to this module (from any phase)
+    const firstGroup = await db.queryOne(
+      "SELECT group_id FROM crms_phase_groups WHERE module_id="+mid+" AND group_id IS NOT NULL FETCH FIRST 1 ROWS ONLY", {}
+    );
+    let defaultGroupId = firstGroup ? num(firstGroup.GROUP_ID) : null;
+
+    if (!defaultGroupId) {
+      // No groups exist at all for this module — try to find any group from assignment groups
+      const anyGroup = await db.queryOne(
+        "SELECT group_id FROM crms_assignment_groups WHERE ROWNUM=1", {}
+      );
+      if (!anyGroup) return; // No groups in the system at all
+      defaultGroupId = num(anyGroup.GROUP_ID);
+    }
+
+    for (const phaseCode of missing) {
+      await db.executeWithCommit(
+        "INSERT INTO crms_phase_groups(module_id,phase_code,group_id) VALUES("+mid+",'"+phaseCode+"',"+defaultGroupId+")", {}
+      );
+      logger.info('Auto-created phase group', { moduleId:mid, phaseCode, groupId:defaultGroupId });
+    }
+  } catch(err) {
+    logger.warn('ensurePhaseGroupRows failed', { moduleId, error: err.message });
+  }
+}
+
 
 module.exports = {
+  ensurePhaseGroupRows,
   getModulesRef,
   getAll, create,
   setPhaseReviewers, setPhaseProcessOwner,

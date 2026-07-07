@@ -34,6 +34,7 @@ ALTER TABLE crms_releases ADD CONSTRAINT chk_release_state CHECK (state IN (
   'Deployment Awaiting Approval L1','Deployment Awaiting Approval L2',
   'Deployment Awaiting Approval L3','Deployment Awaiting Approval L4',
   'Deployment Awaiting Approval L5',
+  'DBA Deployment Phase',
   'Observation Phase',
   'On Hold','Closed','Cancelled'
 ));

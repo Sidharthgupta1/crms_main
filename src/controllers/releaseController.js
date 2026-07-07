@@ -14,6 +14,9 @@ const db       = require('../config/db');
 const logger   = require('../config/logger');
 const flowQ    = require('../utils/approvalFlowQueries');
 const { validate } = require('../middleware/validate');
+const lookup   = require('../services/email/userLookup');
+const mailer   = require('../services/email/mailer');
+const templates = require('../services/email/templates');
 
 function safe(s) { return String(s||'').replace(/'/g,"''"); }
 function num(n)  { return String(parseInt(n,10)||0); }
@@ -75,122 +78,8 @@ function assertCrOwner(release, uid) {
 }
 
 let _releaseTaskColumns = null;
-let _releaseTaskSchemaEnsured = false;
-
-async function ensureReleaseTaskSchema() {
-  if (_releaseTaskSchemaEnsured) return;
-  _releaseTaskSchemaEnsured = true;
-  const alters = [
-    ['PLANNED_START_DATE', 'DATE'],
-    ['PLANNED_END_DATE', 'DATE'],
-    ['ACTUAL_START_DATE', 'DATE'],
-    ['ACTUAL_END_DATE', 'DATE'],
-    ['ASSIGNMENT_GROUP_ID', 'NUMBER'],
-    ['PRIORITY', 'VARCHAR2(1)'],
-    ['SHORT_DESCRIPTION', 'VARCHAR2(500)'],
-    ['DESCRIPTION', 'CLOB'],
-    ['REASON_FOR_REJECT', 'VARCHAR2(500)'],
-    ['DELAY_REASON', 'VARCHAR2(2000)'],
-    ['CEMLI', 'VARCHAR2(200)'],
-    ['SMARTSHEET_ID', 'VARCHAR2(200)'],
-    ['PROCESS_NAME', 'VARCHAR2(500)'],
-  ];
-  for (var i = 0; i < alters.length; i++) {
-    var col = alters[i][0];
-    var typ = alters[i][1];
-    try {
-      await db.executeWithCommit('ALTER TABLE crms_release_tasks ADD ' + col + ' ' + typ, {});
-      logger.info('Added crms_release_tasks.' + col);
-      _releaseTaskColumns = null;
-    } catch (err) {
-      var msg = String(err.message || '');
-      if (msg.indexOf('ORA-01430') === -1 && msg.indexOf('ORA-01442') === -1) {
-        logger.warn('Could not add crms_release_tasks.' + col, { err: msg.split('\n')[0] });
-      }
-    }
-  }
-
-  // Drop old phase_code CHECK constraint and recreate with DBA_DEPLOYMENT
-  // Oracle stores search_condition in UPPERCASE, so use UPPER() for case-insensitive match
-  try {
-    // Try known constraint name first
-    try {
-      await db.executeWithCommit('ALTER TABLE crms_release_tasks DROP CONSTRAINT chk_rt_phase', {});
-      logger.info('Dropped CHECK constraint: chk_rt_phase');
-    } catch (e1) { /* may not exist */ }
-
-    // Also find and drop any other CHECK constraint referencing PHASE_CODE
-    var cons;
-    try {
-      cons = await db.queryAll(
-        "SELECT constraint_name FROM user_constraints WHERE table_name='CRMS_RELEASE_TASKS' AND constraint_type='C' AND UPPER(search_condition) LIKE '%PHASE_CODE%'", {}
-      );
-    } catch (e2) {
-      cons = [];
-    }
-    for (var c = 0; c < cons.length; c++) {
-      try {
-        await db.executeWithCommit('ALTER TABLE crms_release_tasks DROP CONSTRAINT ' + cons[c].CONSTRAINT_NAME, {});
-        logger.info('Dropped CHECK constraint: ' + cons[c].CONSTRAINT_NAME);
-      } catch (e) { /* ignore */ }
-    }
-
-    await db.executeWithCommit(
-      "ALTER TABLE crms_release_tasks ADD CONSTRAINT chk_rt_phase CHECK (phase_code IN ('RD','FSD','DEV','TESTING','UAT','DEPLOYMENT','DBA_DEPLOYMENT'))", {}
-    );
-    logger.info('Created CHECK constraint allowing DBA_DEPLOYMENT');
-  } catch (err) {
-    var msg = String(err.message || '');
-    if (msg.indexOf('ORA-02264') === -1 && msg.indexOf('ORA-01442') === -1) {
-      logger.warn('Could not update phase_code CHECK constraint', { err: msg.split('\n')[0] });
-    }
-  }
-  // Ensure chk_release_state allows DBA Deployment Phase
-  try {
-    try {
-      await db.executeWithCommit('ALTER TABLE crms_releases DROP CONSTRAINT chk_release_state', {});
-      logger.info('Dropped CHECK constraint: chk_release_state');
-    } catch (e1) { /* may not exist */ }
-    // Find and drop any other state constraint
-    var stateCons;
-    try {
-      stateCons = await db.queryAll(
-        "SELECT constraint_name FROM user_constraints WHERE table_name='CRMS_RELEASES' AND constraint_type='C' AND UPPER(search_condition) LIKE '%STATE%'", {}
-      );
-    } catch (e2) { stateCons = []; }
-    for (var sc = 0; sc < stateCons.length; sc++) {
-      try {
-        await db.executeWithCommit('ALTER TABLE crms_releases DROP CONSTRAINT ' + stateCons[sc].CONSTRAINT_NAME, {});
-        logger.info('Dropped state CHECK constraint: ' + stateCons[sc].CONSTRAINT_NAME);
-      } catch (e) { /* ignore */ }
-    }
-    await db.executeWithCommit(
-      "ALTER TABLE crms_releases ADD CONSTRAINT chk_release_state CHECK (state IN ("+
-      "'RD Phase','RD Awaiting Approval L1','RD Awaiting Approval L2','RD Awaiting Approval L3',"+
-      "'RD Awaiting Approval L4','RD Awaiting Approval L5',"+
-      "'RD Approval L1','RD Approval L2','RD Approval L3','RD Approval L4','RD Approval L5',"+
-      "'FSD Phase','FSD Awaiting Approval L1','FSD Awaiting Approval L2','FSD Awaiting Approval L3',"+
-      "'FSD Awaiting Approval L4','FSD Awaiting Approval L5',"+
-      "'FSD Approval L1','FSD Approval L2','FSD Approval L3','FSD Approval L4','FSD Approval L5',"+
-      "'Development Phase','Testing Phase','UAT Phase',"+
-      "'Deployment Phase',"+
-      "'Deployment Approval L1','Deployment Approval L2','Deployment Approval L3',"+
-      "'Deployment Approval L4','Deployment Approval L5',"+
-      "'DBA Deployment Phase',"+
-      "'Observation Phase',"+
-      "'On Hold','Closed','Cancelled'))", {}
-    );
-    logger.info('Created CHECK constraint allowing DBA Deployment Phase');
-  } catch (err) {
-    var msg = String(err.message || '');
-    if (msg.indexOf('ORA-02264') === -1 && msg.indexOf('ORA-01442') === -1) {
-      logger.warn('Could not update state CHECK constraint', { err: msg.split('\n')[0] });
-    }
-  }
-}
 
 async function getReleaseTaskColumns() {
-  await ensureReleaseTaskSchema();
   if (_releaseTaskColumns) return _releaseTaskColumns;
   try {
     const rows = await db.query(
@@ -642,6 +531,8 @@ async function getOne(req, res, next) {
       else if (s.includes('Development')) resolvedPhase = 'DEV';
       else if (s.includes('Testing'))     resolvedPhase = 'TESTING';
       else if (s.includes('UAT'))         resolvedPhase = 'UAT';
+      else if (s.includes('DBA Deployment')) resolvedPhase = 'DBA_DEPLOYMENT';
+      else if (s.includes('Observation')) resolvedPhase = 'OBSERVATION';
       else if (s.includes('Deployment'))  resolvedPhase = 'DEPLOYMENT';
     }
     let phaseReviewers = [];
@@ -695,6 +586,10 @@ async function getOne(req, res, next) {
       })),
     });
   } catch(err) { next(err); }
+}
+
+async function safeSendEmail(fn) {
+  try { const s = require('./../services/emailService'); await fn(s); } catch (e) { logger.warn('[Email] skipped', { error: e.message }); }
 }
 
 // ── POST /releases ────────────────────────────────────────────────────
@@ -783,6 +678,16 @@ async function create(req, res, next) {
       );
     }
     logger.info('Release created', { releaseId, number:rlseNum });
+      // Notify requester of CR creation
+      setImmediate(function() {
+        if (reqBy && reqBy !== '0') {
+          db.executeWithCommit(
+            "INSERT INTO crms_notifications(user_id,title,message,release_id) VALUES(" +
+            reqBy + ",'CR Created','" + safe(rlseNum + ' has been created in RD Phase') + "'," + releaseId + ")", {}
+          ).catch(function(){});
+        }
+      });
+
       // Auto-create Task List row on CR creation
       setImmediate(async function() {
         try {
@@ -981,6 +886,11 @@ async function createPhaseTask(req, res, next) {
     }
     logger.info('Phase task created', { taskNum, phaseCode, releaseId:rid });
 
+    // ── Email: notify subtask assigned ────────────────────────────
+    setImmediate(function() {
+      safeSendEmail(function(s) { return s.sendSubtaskAssigned(rid, seqRow.SEQ, phaseCode, assignedToUserId, uid); });
+    });
+
     // ── Upsert Task List row (fire-and-forget, always) ─────────────
     setImmediate(async function() {
       try {
@@ -1123,6 +1033,11 @@ async function closePhaseTask(req, res, next) {
         });
       }
     } catch(e) {}
+
+    // ── Email: notify subtask completed ──────────────────────────
+    setImmediate(function() {
+      safeSendEmail(function(s) { return s.sendSubtaskCompleted(rid, taskId, task.PHASE_CODE, uid); });
+    });
 
     return res.json({ message:'Task closed' });
   } catch(err) { next(err); }
@@ -1341,7 +1256,27 @@ async function writeStateChange(rid,relNum,fromState,toState,uid,assignedUserId)
 
   // Update CR with new state AND new assignee
   const setAssigned = assignedUserId ? ',assigned_to_user_id='+assignedUserId : '';
-  await db.executeWithCommit("UPDATE crms_releases SET state='"+safe(toState)+"',updated_at=SYSDATE"+setAssigned+" WHERE release_id="+rid, {});
+
+  // Update assignment_group_id to match the new phase's group from module config
+  let setGroup = '';
+  if (newPhaseCode) {
+    try {
+      const relMod = await db.queryOne('SELECT module_id FROM crms_releases WHERE release_id='+rid, {});
+      if (relMod && relMod.MODULE_ID) {
+        const phaseGroup = await db.queryOne(
+          "SELECT group_id FROM crms_phase_groups WHERE module_id="+num(String(relMod.MODULE_ID))+
+          " AND phase_code='"+newPhaseCode+"' FETCH FIRST 1 ROWS ONLY", {}
+        );
+        if (phaseGroup && phaseGroup.GROUP_ID) {
+          setGroup = ',assignment_group_id='+num(phaseGroup.GROUP_ID);
+        }
+      }
+    } catch(eGrp) {
+      logger.warn('Could not update assignment_group_id for phase '+newPhaseCode, { err: eGrp.message });
+    }
+  }
+
+  await db.executeWithCommit("UPDATE crms_releases SET state='"+safe(toState)+"',updated_at=SYSDATE"+setAssigned+setGroup+" WHERE release_id="+rid, {});
   await db.executeWithCommit("INSERT INTO crms_release_history(release_id,action,from_state,to_state,changed_by) VALUES("+rid+",'State Change','"+safe(fromState)+"','"+safe(toState)+"',"+uid+")", {});
   if (uid && uid !== '0') await db.executeWithCommit("INSERT INTO crms_audit(action,performed_by,cr_number,details) VALUES('State Change',"+uid+",'"+relNum+"','"+safe(fromState)+" -> "+safe(toState)+"')", {});
 
@@ -1374,6 +1309,13 @@ async function writeStateChange(rid,relNum,fromState,toState,uid,assignedUserId)
   setImmediate(function() {
     taskListCtrl.updatePhaseDate(relNum, toState, null).catch(function(){});
   });
+
+  // ── Email: notify phase change (fire-and-forget) ────────────────────
+  if (newPhaseCode && !toState.includes('Awaiting') && !toState.includes('Approval')) {
+    setImmediate(function() {
+      safeSendEmail(function(s) { return s.sendPhaseStarted(rid, newPhaseCode, uid); });
+    });
+  }
 
   // ── Push to ServiceNow (fire-and-forget, never blocks CRMS) ─────────
   setImmediate(function() {
@@ -1883,6 +1825,27 @@ async function closeCR(req, res, next) {
     const relNum = release.RELEASE_NUMBER;
     await writeStateChange(rid, relNum, cur, 'Closed', uid, release.ASSIGNED_TO_USER_ID);
     logger.info('CR closed from Observation', { rid, relNum });
+
+    // ── Email: notify CR closed ─────────────────────────────────────
+    setImmediate(function() {
+      safeSendEmail(async function(s) {
+        const relInfo = await lookup.getReleaseInfo(rid);
+        if (!relInfo) return;
+        const reqInfo = await lookup.getRequesterInfo(rid);
+        if (reqInfo && reqInfo.email) {
+          const ts = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+          const link = (process.env.APP_BASE_URL || 'http://localhost:3000') + '/releases/' + rid;
+          const html = templates.phaseCompletedTemplate({
+            crNumber: relInfo.releaseNumber, moduleName: relInfo.moduleName,
+            phase: 'Closed', timestamp: ts, link,
+            recipientName: reqInfo.fullName,
+            message: `CR ${relInfo.releaseNumber} has been closed.`,
+          });
+          await mailer.sendEmail(reqInfo.email, 'CR Closed', html);
+        }
+      });
+    });
+
     return res.json({ message:'CR closed', fromState: cur, toState:'Closed' });
   } catch(err) { next(err); }
 }

@@ -125,7 +125,7 @@ BEGIN
             CONSTRAINT fk_pg_module REFERENCES crms_modules(module_id) ON DELETE CASCADE,
         phase_code     VARCHAR2(20)   NOT NULL
             CONSTRAINT chk_pg_phase CHECK (phase_code IN (
-              ''DRAFT'',''RD'',''FSD'',''DEV'',''TESTING'',''UAT'',''DEPLOYMENT'')),
+              ''DRAFT'',''RD'',''FSD'',''DEV'',''TESTING'',''UAT'',''DEPLOYMENT'',''DBA_DEPLOYMENT'',''OBSERVATION'')),
         group_id       NUMBER         NOT NULL
             CONSTRAINT fk_pg_group REFERENCES crms_assignment_groups(group_id),
         created_at     TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL,
@@ -151,7 +151,7 @@ BEGIN
         module_id    NUMBER         NOT NULL
             CONSTRAINT fk_pt_module REFERENCES crms_modules(module_id) ON DELETE CASCADE,
         phase_code   VARCHAR2(20)   NOT NULL
-            CONSTRAINT chk_pt_phase CHECK (phase_code IN (''RD'')),
+            CONSTRAINT chk_pt_phase CHECK (phase_code IN (''RD'',''FSD'',''DEV'',''TESTING'',''UAT'',''DEPLOYMENT'',''DBA_DEPLOYMENT'',''OBSERVATION'')),
         file_name    VARCHAR2(500)  NOT NULL,
         file_type    VARCHAR2(200),
         file_data    CLOB           NOT NULL,
@@ -181,7 +181,7 @@ BEGIN
         module_id        NUMBER         NOT NULL
             CONSTRAINT fk_af_module REFERENCES crms_modules(module_id) ON DELETE CASCADE,
         phase_code       VARCHAR2(20)   NOT NULL
-            CONSTRAINT chk_af_phase CHECK (phase_code IN (''DRAFT'',''RD'',''FSD'',''DEPLOYMENT'')),
+            CONSTRAINT chk_af_phase CHECK (phase_code IN (''DRAFT'',''RD'',''FSD'',''DEPLOYMENT'',''DBA_DEPLOYMENT'',''OBSERVATION'')),
         level_order      NUMBER(2)      NOT NULL,
         approver_user_id NUMBER         NOT NULL
             CONSTRAINT fk_af_user REFERENCES crms_users(user_id),
@@ -246,7 +246,7 @@ BEGIN
             CONSTRAINT fk_rt_release REFERENCES crms_releases(release_id) ON DELETE CASCADE,
         phase_code           VARCHAR2(20)   NOT NULL
             CONSTRAINT chk_rt_phase CHECK (phase_code IN (
-              ''RD'',''FSD'',''DEV'',''TESTING'',''UAT'',''DEPLOYMENT'')),
+              ''RD'',''FSD'',''DEV'',''TESTING'',''UAT'',''DEPLOYMENT'',''DBA_DEPLOYMENT'',''OBSERVATION'')),
         assigned_to          NUMBER         NOT NULL
             CONSTRAINT fk_rt_assignee REFERENCES crms_users(user_id),
         state                VARCHAR2(10)   DEFAULT ''Open'' NOT NULL

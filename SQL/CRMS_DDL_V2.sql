@@ -1,5 +1,5 @@
 -- ============================================================
--- CRMS V2 DDL — Complete Phase-Based Workflow
+-- CRMS V2 DDL ï¿½ Complete Phase-Based Workflow
 -- Run as: APPS user on ebs_MSWILDEV
 -- Drops and recreates module/approval/phase tables for new flow
 -- ============================================================
@@ -9,7 +9,7 @@ SET DEFINE OFF
 WHENEVER SQLERROR CONTINUE
 
 BEGIN
-  DBMS_OUTPUT.PUT_LINE('CRMS V2 DDL — Starting');
+  DBMS_OUTPUT.PUT_LINE('CRMS V2 DDL ï¿½ Starting');
   DBMS_OUTPUT.PUT_LINE('Time: ' || TO_CHAR(SYSDATE,'DD-MON-YYYY HH24:MI:SS'));
 END;
 /
@@ -53,7 +53,7 @@ BEGIN
       'Deployment Phase',
       'On Hold','Closed','Cancelled'
     ))]';
-    DBMS_OUTPUT.PUT_LINE('  CREATED : chk_release_state (V2 — 28 states)');
+    DBMS_OUTPUT.PUT_LINE('  CREATED : chk_release_state (V2 ï¿½ 28 states)');
   END IF;
 END;
 /
@@ -104,7 +104,7 @@ END;
 -- ============================================================
 -- Step 4: CRMS_PHASE_GROUPS
 -- Maps which assignment group handles each phase for a module
--- phase_code: DRAFT, RD, FSD, DEV, TESTING, UAT, DEPLOYMENT
+-- phase_code: DRAFT, RD, FSD, DEV, TESTING, UAT, DEPLOYMENT, DBA_DEPLOYMENT, OBSERVATION
 -- ============================================================
 DECLARE v NUMBER;
 BEGIN
@@ -117,7 +117,7 @@ BEGIN
             CONSTRAINT fk_pg_module REFERENCES crms_modules(module_id) ON DELETE CASCADE,
         phase_code      VARCHAR2(20)   NOT NULL
             CONSTRAINT chk_pg_phase CHECK (phase_code IN (
-              ''DRAFT'',''RD'',''FSD'',''DEV'',''TESTING'',''UAT'',''DEPLOYMENT''
+              ''DRAFT'',''RD'',''FSD'',''DEV'',''TESTING'',''UAT'',''DEPLOYMENT'',''DBA_DEPLOYMENT'',''OBSERVATION''
             )),
         group_id        NUMBER         NOT NULL
             CONSTRAINT fk_pg_group REFERENCES crms_assignment_groups(group_id),
@@ -144,7 +144,7 @@ BEGIN
         module_id     NUMBER         NOT NULL
             CONSTRAINT fk_pt_module REFERENCES crms_modules(module_id) ON DELETE CASCADE,
         phase_code    VARCHAR2(20)   NOT NULL
-            CONSTRAINT chk_pt_phase CHECK (phase_code IN (''RD'',''FSD'',''DEV'',''TESTING'',''UAT'',''DEPLOYMENT'')),
+            CONSTRAINT chk_pt_phase CHECK (phase_code IN (''RD'',''FSD'',''DEV'',''TESTING'',''UAT'',''DEPLOYMENT'',''DBA_DEPLOYMENT'',''OBSERVATION'')),
         file_name     VARCHAR2(500)  NOT NULL,
         file_type     VARCHAR2(200),
         file_data     CLOB           NOT NULL,
@@ -160,7 +160,7 @@ END;
 /
 
 -- ============================================================
--- Step 6: CRMS_APPROVAL_FLOWS (rebuilt — per phase per module)
+-- Step 6: CRMS_APPROVAL_FLOWS (rebuilt ï¿½ per phase per module)
 -- phase_code: DRAFT, RD, FSD, DEPLOYMENT
 -- ============================================================
 DECLARE v NUMBER;
@@ -173,7 +173,7 @@ BEGIN
         module_id         NUMBER         NOT NULL
             CONSTRAINT fk_af_module REFERENCES crms_modules(module_id) ON DELETE CASCADE,
         phase_code        VARCHAR2(20)   NOT NULL
-            CONSTRAINT chk_af_phase CHECK (phase_code IN (''DRAFT'',''RD'',''FSD'',''DEPLOYMENT'')),
+            CONSTRAINT chk_af_phase CHECK (phase_code IN (''DRAFT'',''RD'',''FSD'',''DEPLOYMENT'',''DBA_DEPLOYMENT'',''OBSERVATION'')),
         level_order       NUMBER(2)      NOT NULL,
         approver_user_id  NUMBER         NOT NULL
             CONSTRAINT fk_af_user REFERENCES crms_users(user_id),
@@ -188,7 +188,7 @@ END;
 /
 
 -- ============================================================
--- Step 7: CRMS_RELEASE_APPROVALS (rebuilt — tracks per-release approval)
+-- Step 7: CRMS_RELEASE_APPROVALS (rebuilt ï¿½ tracks per-release approval)
 -- ============================================================
 DECLARE v NUMBER;
 BEGIN

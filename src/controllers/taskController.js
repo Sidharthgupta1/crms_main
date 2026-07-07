@@ -5,6 +5,10 @@ const db       = require('../config/db');
 const logger   = require('../config/logger');
 const { validate } = require('../middleware/validate');
 
+function safeSendEmail(fn) {
+  try { const s = require('../services/emailService'); setImmediate(function() { fn(s).catch(function(e) { logger.warn('[Email] taskController', { error: e.message }); }); }); } catch(e) {}
+}
+
 const VALID_PHASES = ['BRD','FSD','Dev','Testing','UAT'];
 const PHASE_TYPE   = { BRD:'BRD Task',FSD:'FSD Task',Dev:'Development Task',Testing:'Testing Task',UAT:'UAT Task' };
 
@@ -72,6 +76,7 @@ async function create(req, res, next) {
         "INSERT INTO crms_notifications(user_id,title,message,release_id) VALUES("+
         num(assignedToUserId)+",'New Task Assigned','"+safe(taskNum+" assigned to you on "+rel.RELEASE_NUMBER)+"',"+rid+")", {}
       );
+      safeSendEmail(function(s) { return s.sendSubtaskAssigned(rid, taskId, phase, assignedToUserId, reqBy); });
     }
     await db.executeWithCommit(
       "INSERT INTO crms_audit(action,performed_by,cr_number,details) VALUES("+
@@ -86,10 +91,14 @@ async function create(req, res, next) {
 async function closeTask(req, res, next) {
   try {
     const tid    = num(req.params.taskId);
+    const task = await db.queryOne('SELECT release_id,phase FROM crms_tasks WHERE task_id='+tid, {});
     const result = await db.executeWithCommit(
       "UPDATE crms_tasks SET state='Closed',updated_at=SYSDATE WHERE task_id="+tid+" AND state='Open'", {}
     );
     if (result.rowsAffected===0) return res.status(400).json({ error:'Task not found or already closed' });
+    if (task) {
+      safeSendEmail(function(s) { return s.sendSubtaskCompleted(task.RELEASE_ID, tid, task.PHASE, req.user.userId); });
+    }
     return res.json({ message:'Task closed' });
   } catch(err) { next(err); }
 }

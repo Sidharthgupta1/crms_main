@@ -2640,6 +2640,7 @@ function onModuleChange() {
   //   - If only company filter: use company filter
   //   - If only module filter: use module filter
   //   - If neither: show all groups
+  //   - If intersection is empty, fall back to module-only filter
   var hasCompanyMapping = Object.keys(companyMappedGroups).length > 0;
 
   var filtered = REF.groups.filter(function(g) {
@@ -2653,6 +2654,13 @@ function onModuleChange() {
     }
     return true; // no mapping configured — show all
   });
+
+  // If intersection produced no results, fall back to module-only filter
+  if (!filtered.length && hasCompanyMapping && hasModuleMapping) {
+    filtered = REF.groups.filter(function(g) {
+      return moduleMappedGroups[String(g.groupId)];
+    });
+  }
 
   if (!filtered.length && (hasCompanyMapping || hasModuleMapping)) {
     agEl.innerHTML = '<option value="">— No groups configured for this selection —</option>';
@@ -4918,7 +4926,7 @@ async function renderApprovalGroupMappings() {
   var data = await GET('/admin/approval-groups').catch(function(){ return []; });
   var mappings = Array.isArray(data) ? data : [];
 
-  var PHASE_OPTS = ['RD','FSD','DEV','TESTING','UAT','DEPLOYMENT'];
+  var PHASE_OPTS = ['RD','FSD','DEV','TESTING','UAT','DEPLOYMENT','DBA_DEPLOYMENT','OBSERVATION'];
 
   var addHtml =
     '<div style="display:grid;grid-template-columns:0.7fr 0.5fr 1fr 1fr 1fr 1fr auto;gap:8px;align-items:end;margin-bottom:12px">' +
@@ -6112,8 +6120,8 @@ function renderModuleCard(m) {
 
   // Phase groups — show per-phase assignment
   var phaseGroups = m.phaseGroups || {};
-  var phaseLabels = { DRAFT:'Draft', RD:'RD', FSD:'FSD', DEV:'Dev', TESTING:'Testing', UAT:'UAT', DEPLOYMENT:'Deployment' };
-  var phaseOrder  = ['DRAFT','RD','FSD','DEV','TESTING','UAT','DEPLOYMENT'];
+  var phaseLabels = { DRAFT:'Draft', RD:'RD', FSD:'FSD', DEV:'Dev', TESTING:'Testing', UAT:'UAT', DEPLOYMENT:'Deployment', DBA_DEPLOYMENT:'DBA Deployment', OBSERVATION:'Observation' };
+  var phaseOrder  = ['DRAFT','RD','FSD','DEV','TESTING','UAT','DEPLOYMENT','DBA_DEPLOYMENT','OBSERVATION'];
   var groupsHtml = phaseOrder.map(function(pc) {
     var pg = phaseGroups[pc];
     if (!pg) return '<span style="font-size:11px;color:var(--grey-400);margin-right:6px">'+phaseLabels[pc]+': <em>none</em></span>';
@@ -6121,7 +6129,7 @@ function renderModuleCard(m) {
   }).join('');
   var reviewersByPhase2   = m.reviewersByPhase || {};
   var processOwnerByPhase = m.processOwnerByPhase || {};
-  var PHASE_LABELS2 = { RD:'RD', FSD:'FSD', DEV:'Dev', TESTING:'Testing', UAT:'UAT', DEPLOYMENT:'Deployment' };
+  var PHASE_LABELS2 = { RD:'RD', FSD:'FSD', DEV:'Dev', TESTING:'Testing', UAT:'UAT', DEPLOYMENT:'Deployment', DBA_DEPLOYMENT:'DBA Deployment', OBSERVATION:'Observation' };
   var reviewersHtml = Object.keys(reviewersByPhase2).length
     ? Object.entries(reviewersByPhase2).map(function(e) {
         var ph = e[0], rvs = e[1];
@@ -6966,7 +6974,7 @@ async function checkApproverStatus() {
 var PHASE_CODE_FROM_STATE = {
   'RD Phase':'RD', 'FSD Phase':'FSD', 'Development Phase':'DEV',
   'Testing Phase':'TESTING', 'UAT Phase':'UAT', 'Deployment Phase':'DEPLOYMENT',
-  'DBA Deployment Phase':'DBA_DEPLOYMENT'
+  'DBA Deployment Phase':'DBA_DEPLOYMENT', 'Observation Phase':'OBSERVATION'
 };
 var APPROVAL_PHASE_STATES = ['RD Phase','FSD Phase','Deployment Phase'];
 var ALL_ACTIVE_PHASES = ['RD Phase','FSD Phase','Development Phase','Testing Phase','UAT Phase','Deployment Phase','DBA Deployment Phase'];

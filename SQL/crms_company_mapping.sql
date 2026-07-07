@@ -48,7 +48,7 @@ BEGIN
             CONSTRAINT fk_cgpm_group   REFERENCES crms_assignment_groups(group_id)      ON DELETE CASCADE,
         phase_code    VARCHAR2(20) NOT NULL
             CONSTRAINT chk_cgpm_phase CHECK (phase_code IN (
-              ''ALL'',''RD'',''FSD'',''DEV'',''TESTING'',''UAT'',''DEPLOYMENT''
+              ''ALL'',''RD'',''FSD'',''DEV'',''TESTING'',''UAT'',''DEPLOYMENT'',''DBA_DEPLOYMENT'',''OBSERVATION''
             )),
         created_at    TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
         CONSTRAINT uq_company_service_group_phase UNIQUE (company_id, service_id, group_id, phase_code)

@@ -13,6 +13,8 @@
     "test": "jest --runInBand --forceExit"
   },
   "dependencies": {
+    "@azure/msal-node": "^5.3.1",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
     "@vercel/analytics": "^2.0.1",
     "bcryptjs": "^2.4.3",
     "compression": "^1.7.4",
@@ -23,6 +25,7 @@
     "express-rate-limit": "^7.3.1",
     "express-validator": "^7.1.0",
     "helmet": "^7.1.0",
+    "isomorphic-fetch": "^3.0.0",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
     "oracledb": "^6.4.0",
