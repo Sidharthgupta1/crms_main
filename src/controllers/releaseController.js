@@ -75,122 +75,8 @@ function assertCrOwner(release, uid) {
 }
 
 let _releaseTaskColumns = null;
-let _releaseTaskSchemaEnsured = false;
-
-async function ensureReleaseTaskSchema() {
-  if (_releaseTaskSchemaEnsured) return;
-  _releaseTaskSchemaEnsured = true;
-  const alters = [
-    ['PLANNED_START_DATE', 'DATE'],
-    ['PLANNED_END_DATE', 'DATE'],
-    ['ACTUAL_START_DATE', 'DATE'],
-    ['ACTUAL_END_DATE', 'DATE'],
-    ['ASSIGNMENT_GROUP_ID', 'NUMBER'],
-    ['PRIORITY', 'VARCHAR2(1)'],
-    ['SHORT_DESCRIPTION', 'VARCHAR2(500)'],
-    ['DESCRIPTION', 'CLOB'],
-    ['REASON_FOR_REJECT', 'VARCHAR2(500)'],
-    ['DELAY_REASON', 'VARCHAR2(2000)'],
-    ['CEMLI', 'VARCHAR2(200)'],
-    ['SMARTSHEET_ID', 'VARCHAR2(200)'],
-    ['PROCESS_NAME', 'VARCHAR2(500)'],
-  ];
-  for (var i = 0; i < alters.length; i++) {
-    var col = alters[i][0];
-    var typ = alters[i][1];
-    try {
-      await db.executeWithCommit('ALTER TABLE crms_release_tasks ADD ' + col + ' ' + typ, {});
-      logger.info('Added crms_release_tasks.' + col);
-      _releaseTaskColumns = null;
-    } catch (err) {
-      var msg = String(err.message || '');
-      if (msg.indexOf('ORA-01430') === -1 && msg.indexOf('ORA-01442') === -1) {
-        logger.warn('Could not add crms_release_tasks.' + col, { err: msg.split('\n')[0] });
-      }
-    }
-  }
-
-  // Drop old phase_code CHECK constraint and recreate with DBA_DEPLOYMENT
-  // Oracle stores search_condition in UPPERCASE, so use UPPER() for case-insensitive match
-  try {
-    // Try known constraint name first
-    try {
-      await db.executeWithCommit('ALTER TABLE crms_release_tasks DROP CONSTRAINT chk_rt_phase', {});
-      logger.info('Dropped CHECK constraint: chk_rt_phase');
-    } catch (e1) { /* may not exist */ }
-
-    // Also find and drop any other CHECK constraint referencing PHASE_CODE
-    var cons;
-    try {
-      cons = await db.queryAll(
-        "SELECT constraint_name FROM user_constraints WHERE table_name='CRMS_RELEASE_TASKS' AND constraint_type='C' AND UPPER(search_condition) LIKE '%PHASE_CODE%'", {}
-      );
-    } catch (e2) {
-      cons = [];
-    }
-    for (var c = 0; c < cons.length; c++) {
-      try {
-        await db.executeWithCommit('ALTER TABLE crms_release_tasks DROP CONSTRAINT ' + cons[c].CONSTRAINT_NAME, {});
-        logger.info('Dropped CHECK constraint: ' + cons[c].CONSTRAINT_NAME);
-      } catch (e) { /* ignore */ }
-    }
-
-    await db.executeWithCommit(
-      "ALTER TABLE crms_release_tasks ADD CONSTRAINT chk_rt_phase CHECK (phase_code IN ('RD','FSD','DEV','TESTING','UAT','DEPLOYMENT','DBA_DEPLOYMENT'))", {}
-    );
-    logger.info('Created CHECK constraint allowing DBA_DEPLOYMENT');
-  } catch (err) {
-    var msg = String(err.message || '');
-    if (msg.indexOf('ORA-02264') === -1 && msg.indexOf('ORA-01442') === -1) {
-      logger.warn('Could not update phase_code CHECK constraint', { err: msg.split('\n')[0] });
-    }
-  }
-  // Ensure chk_release_state allows DBA Deployment Phase
-  try {
-    try {
-      await db.executeWithCommit('ALTER TABLE crms_releases DROP CONSTRAINT chk_release_state', {});
-      logger.info('Dropped CHECK constraint: chk_release_state');
-    } catch (e1) { /* may not exist */ }
-    // Find and drop any other state constraint
-    var stateCons;
-    try {
-      stateCons = await db.queryAll(
-        "SELECT constraint_name FROM user_constraints WHERE table_name='CRMS_RELEASES' AND constraint_type='C' AND UPPER(search_condition) LIKE '%STATE%'", {}
-      );
-    } catch (e2) { stateCons = []; }
-    for (var sc = 0; sc < stateCons.length; sc++) {
-      try {
-        await db.executeWithCommit('ALTER TABLE crms_releases DROP CONSTRAINT ' + stateCons[sc].CONSTRAINT_NAME, {});
-        logger.info('Dropped state CHECK constraint: ' + stateCons[sc].CONSTRAINT_NAME);
-      } catch (e) { /* ignore */ }
-    }
-    await db.executeWithCommit(
-      "ALTER TABLE crms_releases ADD CONSTRAINT chk_release_state CHECK (state IN ("+
-      "'RD Phase','RD Awaiting Approval L1','RD Awaiting Approval L2','RD Awaiting Approval L3',"+
-      "'RD Awaiting Approval L4','RD Awaiting Approval L5',"+
-      "'RD Approval L1','RD Approval L2','RD Approval L3','RD Approval L4','RD Approval L5',"+
-      "'FSD Phase','FSD Awaiting Approval L1','FSD Awaiting Approval L2','FSD Awaiting Approval L3',"+
-      "'FSD Awaiting Approval L4','FSD Awaiting Approval L5',"+
-      "'FSD Approval L1','FSD Approval L2','FSD Approval L3','FSD Approval L4','FSD Approval L5',"+
-      "'Development Phase','Testing Phase','UAT Phase',"+
-      "'Deployment Phase',"+
-      "'Deployment Approval L1','Deployment Approval L2','Deployment Approval L3',"+
-      "'Deployment Approval L4','Deployment Approval L5',"+
-      "'DBA Deployment Phase',"+
-      "'Observation Phase',"+
-      "'On Hold','Closed','Cancelled'))", {}
-    );
-    logger.info('Created CHECK constraint allowing DBA Deployment Phase');
-  } catch (err) {
-    var msg = String(err.message || '');
-    if (msg.indexOf('ORA-02264') === -1 && msg.indexOf('ORA-01442') === -1) {
-      logger.warn('Could not update state CHECK constraint', { err: msg.split('\n')[0] });
-    }
-  }
-}
 
 async function getReleaseTaskColumns() {
-  await ensureReleaseTaskSchema();
   if (_releaseTaskColumns) return _releaseTaskColumns;
   try {
     const rows = await db.query(
@@ -367,10 +253,20 @@ async function buildPhaseTaskUpdateParts(body) {
 }
 
 // ── GET /releases/next-number ─────────────────────────────────────────
+// Peeks at the next sequence value WITHOUT consuming it (no NEXTVAL).
+// Uses user_sequences.last_number which holds the next value to be issued.
 async function nextNumber(req, res, next) {
   try {
-    const row = await db.queryOne('SELECT crms_release_seq.NEXTVAL AS seq FROM dual', {});
-    return res.json({ releaseNumber:'RLSE'+String(Number(row.SEQ)).padStart(7,'0') });
+    const row = await db.queryOne(
+      "SELECT last_number AS seq FROM user_sequences WHERE sequence_name='CRMS_RELEASE_SEQ'", {}
+    );
+    if (!row) {
+      return res.status(500).json({ error: 'Sequence CRMS_RELEASE_SEQ not found' });
+    }
+    const nextSeq = Number(row.SEQ);
+    const num = 'RLSE' + String(nextSeq).padStart(7, '0');
+    console.log('[SEQ] nextNumber() peek →', num, '(sequence last_number:', nextSeq + ')');
+    return res.json({ releaseNumber: num, sequence: nextSeq });
   } catch(err) { next(err); }
 }
 
@@ -637,12 +533,14 @@ async function getOne(req, res, next) {
     let resolvedPhase = phaseCode;
     if (!resolvedPhase && row.STATE) {
       const s = row.STATE;
-      if      (s.includes('RD'))          resolvedPhase = 'RD';
-      else if (s.includes('FSD'))         resolvedPhase = 'FSD';
+      if      (s.includes('DBA'))         resolvedPhase = 'DBA_DEPLOYMENT';
+      else if (s.includes('Observation')) resolvedPhase = 'OBSERVATION';
+      else if (s.includes('Deployment'))  resolvedPhase = 'DEPLOYMENT';
       else if (s.includes('Development')) resolvedPhase = 'DEV';
       else if (s.includes('Testing'))     resolvedPhase = 'TESTING';
       else if (s.includes('UAT'))         resolvedPhase = 'UAT';
-      else if (s.includes('Deployment'))  resolvedPhase = 'DEPLOYMENT';
+      else if (s.includes('FSD'))         resolvedPhase = 'FSD';
+      else if (s.includes('RD'))          resolvedPhase = 'RD';
     }
     let phaseReviewers = [];
     if (row.MODULE_ID) {
@@ -655,6 +553,31 @@ async function getOne(req, res, next) {
         (resolvedPhase ? " AND pr.phase_code='"+resolvedPhase+"'" : '')+
         ' ORDER BY u.full_name', {}
       ).catch(function(){ return []; });
+    }
+
+    // Resolve phase-specific assignment group (priority: release override > module config)
+    let phaseAssignmentGroup = null;
+    let phaseAssignmentGroupId = null;
+    let phaseAssignmentGroupName = null;
+    if (resolvedPhase && row.MODULE_ID) {
+      // First check per-release phase group override
+      const rpg = releasePhaseGroups.find(function(pg) { return pg.PHASE_CODE === resolvedPhase; });
+      if (rpg) {
+        phaseAssignmentGroupId   = rpg.GROUP_ID;
+        phaseAssignmentGroupName = rpg.GROUP_NAME;
+      } else {
+        // Fall back to module-level phase group config
+        const pgRow = await db.queryOne(
+          "SELECT pg.group_id,ag.group_name FROM crms_phase_groups pg "+
+          "JOIN crms_assignment_groups ag ON ag.group_id=pg.group_id "+
+          "WHERE pg.module_id="+num(String(row.MODULE_ID))+" AND pg.phase_code='"+resolvedPhase+"'", {}
+        ).catch(function(){ return null; });
+        if (pgRow) {
+          phaseAssignmentGroupId   = pgRow.GROUP_ID;
+          phaseAssignmentGroupName = pgRow.GROUP_NAME;
+        }
+      }
+      phaseAssignmentGroup = phaseAssignmentGroupName || row.ASSIGNMENT_GROUP || null;
     }
 
     return res.json({
@@ -671,6 +594,8 @@ async function getOne(req, res, next) {
       requestedByUserId:    row.REQUESTED_BY_USER_ID,
       assignedToUserId:     row.ASSIGNED_TO_USER_ID,
       assignmentGroupId:    row.ASSIGNMENT_GROUP_ID,
+      phaseAssignmentGroup: phaseAssignmentGroup,
+      phaseAssignmentGroupId: phaseAssignmentGroupId,
       crOwnerUserId:        row.CR_OWNER_USER_ID || null,
       crOwnerName:          row.CR_OWNER_NAME    || '',
       cemli:                row.CEMLI            || '',
@@ -739,6 +664,7 @@ async function create(req, res, next) {
 
     const seqRow = await db.queryOne('SELECT crms_release_seq.NEXTVAL AS seq FROM dual', {});
     const rlseNum = 'RLSE'+String(Number(seqRow.SEQ)).padStart(7,'0');
+    console.log('[SEQ] create() NEXTVAL →', rlseNum, '(raw seq:', seqRow.SEQ + ')');
 
     await db.executeWithCommit(
       "INSERT INTO crms_releases(release_number,state,requested_by,priority,title,summary,"+
@@ -754,6 +680,7 @@ async function create(req, res, next) {
     );
     const relRow = await db.queryOne("SELECT release_id FROM crms_releases WHERE release_number='"+rlseNum+"'", {});
     const releaseId = num(relRow.RELEASE_ID);
+    console.log('[SEQ] create() stored →', rlseNum, '(release_id:', releaseId + ')');
     await db.executeWithCommit(
       "INSERT INTO crms_release_history(release_id,action,from_state,to_state,changed_by) VALUES("+
       releaseId+",'Created',NULL,'RD Phase',"+reqBy+")", {}
@@ -930,6 +857,17 @@ async function advanceState(req, res, next) {
       }
       const next = MANUAL_ADVANCE[cur];
       await writeStateChange(rid,relNum,cur,next,uid,release.ASSIGNED_TO_USER_ID);
+
+      const advancedPhaseCode = stateToPhaseCode(next);
+      if (advancedPhaseCode) {
+        setImmediate(() => {
+          try {
+            const emailSvc = require('../services/emailService');
+            emailSvc.sendPhaseStarted(rid, advancedPhaseCode, uid).catch(() => {});
+          } catch (e) { logger.warn('[Email] require failed', { e: e.message }); }
+        });
+      }
+
       return res.json({ releaseId:Number(rid), fromState:cur, toState:next });
     }
 
@@ -980,6 +918,19 @@ async function createPhaseTask(req, res, next) {
       await db.executeWithCommit("INSERT INTO crms_notifications(user_id,title,message,release_id) VALUES("+num(assignedToUserId)+",'Sub-Task Assigned: "+taskNum+"','"+safe(taskNum+' — '+phaseCode+' task on '+release.RELEASE_NUMBER)+"',"+rid+")", {});
     }
     logger.info('Phase task created', { taskNum, phaseCode, releaseId:rid });
+
+    // ── Email: Notify subtask assigned (fire-and-forget) ──────────
+    if (assignedToUserId && num(assignedToUserId) !== '0') {
+      setImmediate(async () => {
+        try {
+          const taskRow = await db.queryOne("SELECT task_id FROM crms_release_tasks WHERE task_number='" + taskNum + "'", {});
+          if (taskRow) {
+            const emailSvc = require('../services/emailService');
+            emailSvc.sendSubtaskAssigned(rid, num(taskRow.TASK_ID), phaseCode, num(assignedToUserId), uid).catch(() => {});
+          }
+        } catch (e) { logger.warn('[Email] subtask assign', { e: e.message }); }
+      });
+    }
 
     // ── Upsert Task List row (fire-and-forget, always) ─────────────
     setImmediate(async function() {
@@ -1123,6 +1074,14 @@ async function closePhaseTask(req, res, next) {
         });
       }
     } catch(e) {}
+
+    // ── Email: Notify subtask completed (fire-and-forget) ──────────
+    setImmediate(() => {
+      try {
+        const emailSvc = require('../services/emailService');
+        emailSvc.sendSubtaskCompleted(rid, taskId, task.PHASE_CODE, uid).catch(() => {});
+      } catch (e) { logger.warn('[Email] require failed', { e: e.message }); }
+    });
 
     return res.json({ message:'Task closed' });
   } catch(err) { next(err); }
@@ -1883,6 +1842,15 @@ async function closeCR(req, res, next) {
     const relNum = release.RELEASE_NUMBER;
     await writeStateChange(rid, relNum, cur, 'Closed', uid, release.ASSIGNED_TO_USER_ID);
     logger.info('CR closed from Observation', { rid, relNum });
+
+    // ── Email: Notify phase completed (fire-and-forget) ────────────
+    setImmediate(() => {
+      try {
+        const emailSvc = require('../services/emailService');
+        emailSvc.sendPhaseCompleted(rid, 'OBSERVATION').catch(() => {});
+      } catch (e) { logger.warn('[Email] require failed', { e: e.message }); }
+    });
+
     return res.json({ message:'CR closed', fromState: cur, toState:'Closed' });
   } catch(err) { next(err); }
 }
