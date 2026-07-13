@@ -658,6 +658,18 @@ select.tl-cell {
       <p>Sign in with your Oracle EBS username</p>
       <div class="field"><label>Oracle Username</label><input type="text" id="login-user" placeholder="Enter your Oracle username" autocomplete="username" autocorrect="off" autocapitalize="characters" spellcheck="false" onkeydown="if(event.key==='Enter')document.getElementById('login-pass').focus()" style="text-transform:uppercase"/></div>
       <div class="field"><label>Password</label><input type="password" id="login-pass" placeholder="Enter password" onkeydown="if(event.key==='Enter')doLogin()"  /></div>
+      <div class="field"><label>Database</label>
+        <div style="display:flex;gap:24px;padding:10px 12px;border:1.5px solid var(--grey-200);border-radius:var(--radius)">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:14px;font-family:var(--font);color:var(--grey-800)">
+            <input type="radio" name="login-db" value="PRIMARY" checked style="accent-color:var(--red);width:16px;height:16px"/>
+            Primary Database
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:14px;font-family:var(--font);color:var(--grey-800)">
+            <input type="radio" name="login-db" value="SECONDARY" style="accent-color:var(--red);width:16px;height:16px"/>
+            Secondary Database
+          </label>
+        </div>
+      </div>
       <button class="btn-primary" onclick="doLogin()">Sign In &rarr;</button>
 
       <div class="auth-error" id="auth-error" style="display:none"></div>
@@ -753,6 +765,10 @@ select.tl-cell {
         <div class="sidebar-item" onclick="showView('oracle-users',this)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
           Oracle Users
+        </div>
+        <div class="sidebar-item" onclick="showView('sessions',this)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a4 4 0 0 0-8 0v2"/><line x1="2" y1="13" x2="22" y2="13"/></svg>
+          Active Sessions
         </div>
       </div>
     </div>
@@ -1220,6 +1236,26 @@ select.tl-cell {
         </div>
       </div>
 
+      <!-- ACTIVE SESSIONS -->
+      <div class="view" id="view-sessions">
+        <div class="page-header">
+          <div>
+            <h1>Active Sessions</h1>
+            <p>Manage your login sessions across devices</p>
+          </div>
+          <div style="display:flex;gap:10px">
+            <button class="btn btn-outline" onclick="renderSessionsView()" style="border-color:#3b82f6;color:#3b82f6">&#8635; Refresh</button>
+          </div>
+        </div>
+        <div id="sessions-stat-cards" style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap"></div>
+        <div id="sessions-table-wrap">
+          <div style="padding:40px;text-align:center;color:var(--grey-400)">
+            <div style="font-size:32px;margin-bottom:8px">&#128274;</div>
+            <p>Click <strong>Refresh</strong> to load sessions</p>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -1562,8 +1598,8 @@ const PHASE_TBODY= {BRD:'tasks-brd',FSD:'tasks-fsd',Dev:'tasks-dev',Testing:'tas
 
 // ── Runtime state ─────────────────────────────────────────────────────
 let currentUser    = null;   // { userId, initials, fullName, role, groups }
-let accessToken    = null;   // JWT Bearer token
-let refreshToken   = null;   // JWT refresh token
+let accessToken    = null;   // JWT Bearer token (memory only — never persisted)
+// refreshToken is stored in HttpOnly cookie — never in JS
 let activeDetailId = null;   // releaseId currently open in detail modal
 let activeTaskPhase= null;   // phase tab currently open
 let assignmentShown= false;
@@ -1577,7 +1613,7 @@ var _fndUsers = [];
 // ══════════════════════════════════════════════════════════════════════
 async function api(method, path, body, retry) {
   if (retry === undefined) retry = true;
-  var opts = { method: method, headers: { 'Content-Type': 'application/json' } };
+  var opts = { method: method, headers: { 'Content-Type': 'application/json' }, credentials: 'include' };
   if (accessToken) opts.headers['Authorization'] = 'Bearer ' + accessToken;
   if (body)        opts.body = JSON.stringify(body);
 
@@ -1600,10 +1636,29 @@ async function api(method, path, body, retry) {
   }
 
   // Auto-refresh on 401 TOKEN_EXPIRED — only when user is actually logged in
-  if (res.status === 401 && retry && refreshToken && currentUser) {
-    var ok = await tryRefresh();
-    if (ok) return api(method, path, body, false);
-    doLogout(false); return null;  // don't clear fields — user might be re-logging in
+  if (res.status === 401 && retry && currentUser) {
+    var errCode = null;
+    var errMsg  = null;
+    try { var errClone = await res.clone().json(); errCode = errClone.code; errMsg = errClone.error || errClone.message; } catch(e) {}
+    if (errCode === 'TOKEN_EXPIRED') {
+      var ok = await tryRefresh();
+      if (ok) return api(method, path, body, false);
+      // Refresh failed — force logout
+      doLogout(false); return null;
+    }
+    // Session expiry / revocation — handle ALL session codes identically per spec
+    if (errCode === 'SESSION_IDLE_TIMEOUT') {
+      doLogout(false);
+      showSessionExpiredMessage('Your session has expired due to inactivity. Please sign in again.');
+      return null;
+    }
+    if (errCode === 'SESSION_EXPIRED' || errCode === 'INVALID_REFRESH_TOKEN' || errCode === 'SESSION_REVOKED' || errCode === 'SESSION_INVALID' || errCode === 'SESSION_NOT_FOUND') {
+      doLogout(false);
+      showSessionExpiredMessage(errMsg || 'Your session is no longer valid. Please sign in again.');
+      return null;
+    }
+    // Any other 401 — force logout
+    doLogout(false); return null;
   }
 
   if (!res.ok) {
@@ -1630,49 +1685,87 @@ async function tryRefresh() {
   try {
     const res = await fetch(API_BASE + '/auth/refresh', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken }),
+      credentials: 'include',
     });
-    if (!res.ok) return false;
+    if (!res.ok) {
+      try {
+        var errData = await res.json();
+        if (errData.code === 'SESSION_IDLE_TIMEOUT') {
+          doLogout(false);
+          showSessionExpiredMessage('Your session has expired due to inactivity. Please sign in again.');
+        } else if (errData.code === 'SESSION_EXPIRED') {
+          doLogout(false);
+          showSessionExpiredMessage('Your session has expired. Please sign in again.');
+        } else if (errData.code === 'SESSION_REVOKED' || errData.code === 'INVALID_REFRESH_TOKEN' || errData.code === 'SESSION_INVALID' || errData.code === 'SESSION_NOT_FOUND') {
+          doLogout(false);
+          showSessionExpiredMessage(errData.error || 'Your session is no longer valid. Please sign in again.');
+        }
+      } catch(e) {}
+      return false;
+    }
     const data = await res.json();
-    accessToken  = data.accessToken;
-    refreshToken = data.refreshToken;
-    sessionStorage.setItem('crms_access',  accessToken);
-    sessionStorage.setItem('crms_refresh', refreshToken);
+    accessToken = data.accessToken;
     return true;
   } catch { return false; }
+}
+
+function showSessionExpiredMessage(msg) {
+  var el = document.getElementById('auth-error');
+  if (el) {
+    el.textContent = msg || 'Your session has expired. Please sign in again.';
+    el.style.display = 'block';
+    el.style.color = '#c8102e';
+    el.style.fontSize = '13px';
+    el.style.marginTop = '10px';
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════
 // AUTH
 // ══════════════════════════════════════════════════════════════════════
 async function initLogin() {
-  // Try to restore previous session from sessionStorage
-  // IMPORTANT: Use raw fetch (NOT api()) so we never trigger doLogout() here.
-  // doLogout() clears the login form fields which would erase what the user typed.
-  const savedAccess  = sessionStorage.getItem('crms_access');
-  const savedRefresh = sessionStorage.getItem('crms_refresh');
-  if (savedAccess && savedRefresh) {
-    try {
-      var res = await fetch(API_BASE + '/auth/me', {
-        headers: { 'Authorization': 'Bearer ' + savedAccess }
-      });
-      if (res.ok) {
-        var me = await res.json();
-        if (me && me.userId) {
-          accessToken  = savedAccess;
-          refreshToken = savedRefresh;
-          await afterLogin(me);
-          return;
+  // Try to restore session from refresh cookie
+  try {
+    var res = await fetch(API_BASE + '/auth/refresh', {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (res.ok) {
+      var data = await res.json();
+      if (data && data.accessToken) {
+        accessToken = data.accessToken;
+        // Now fetch user info
+        var meRes = await fetch(API_BASE + '/auth/me', {
+          headers: { 'Authorization': 'Bearer ' + accessToken },
+          credentials: 'include',
+        });
+        if (meRes.ok) {
+          var me = await meRes.json();
+          if (me && me.userId) {
+            await afterLogin(me);
+            return;
+          }
         }
       }
-    } catch(e) {
-      // Network error or server down — just show login form, don't clear fields
     }
-    // Session invalid — silently clear tokens only, NOT the form fields
+  } catch(e) {}
+  // Also try old sessionStorage for SSO compatibility
+  var storedAccess = null;
+  try { storedAccess = sessionStorage.getItem('crms_access'); } catch(e) {}
+  if (storedAccess) {
+    accessToken = storedAccess;
+    try {
+      var meRes2 = await fetch(API_BASE + '/auth/me', {
+        headers: { 'Authorization': 'Bearer ' + accessToken },
+        credentials: 'include',
+      });
+      if (meRes2.ok) {
+        var meData2 = await meRes2.json();
+        if (meData2 && meData2.userId) { await afterLogin(meData2); return; }
+      }
+    } catch(e) {}
     sessionStorage.removeItem('crms_access');
-    sessionStorage.removeItem('crms_refresh');
-    accessToken = refreshToken = null;
+    accessToken = null;
   }
   // Show login form — already visible by default
 }
@@ -1685,6 +1778,8 @@ async function doLogin() {
 
   var username = (userEl.value || '').trim().toUpperCase();
   var pass     = (passEl.value || '').trim();
+  var dbEl     = document.querySelector('input[name="login-db"]:checked');
+  var database = (dbEl ? dbEl.value : 'PRIMARY');
 
   errEl.style.display = 'none'; errEl.textContent = '';
 
@@ -1698,7 +1793,8 @@ async function doLogin() {
     var res = await fetch(API_BASE + '/auth/login', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ username: username, password: pass })
+      credentials: 'include',
+      body:    JSON.stringify({ username, password: pass, database })
     });
 
     if (res.status === 503) {
@@ -1721,7 +1817,8 @@ async function doLogin() {
 
     result = await res.json();
   } catch(e) {
-    showLoginError('⚠ Cannot connect to server' + ' Is backend running?');
+    console.error('[LOGIN FETCH ERROR]', e);
+    showLoginError('⚠ Cannot connect to server — ' + (e.message || e) + ' Is backend running?');
     return;
   } finally {
     btn.disabled    = false;
@@ -1733,11 +1830,8 @@ async function doLogin() {
     return;
   }
 
-  // Success
-  accessToken  = result.accessToken;
-  refreshToken = result.refreshToken;
-  sessionStorage.setItem('crms_access',  accessToken);
-  sessionStorage.setItem('crms_refresh', refreshToken);
+  // Success — refresh token is in HttpOnly cookie, only store access token in memory
+  accessToken = result.accessToken;
   errEl.style.display = 'none';
   if (result.isNewUser) {
     setTimeout(function() {
@@ -1790,13 +1884,18 @@ async function afterLogin(user) {
   checkApproverStatus();
   checkReviewerStatus();
   setTimeout(initUIEnhancements, 300);
+  resetIdleTimer();
 }
 
 async function doLogout(clearFields) {
   if(window._notifPollTimer){clearInterval(window._notifPollTimer);window._notifPollTimer=null;}
-  try{await POST('/auth/logout');}catch(e){}
-  accessToken=refreshToken=null; currentUser=null; activeDetailId=null; _currentRelease=null;
-  try{sessionStorage.removeItem('crms_access');sessionStorage.removeItem('crms_refresh');}catch(e){}
+  try{
+    var opts = { method:'POST', credentials:'include', headers:{} };
+    if(accessToken) opts.headers['Authorization'] = 'Bearer ' + accessToken;
+    await fetch(API_BASE + '/auth/logout', opts);
+  }catch(e){}
+  accessToken=null; currentUser=null; activeDetailId=null; _currentRelease=null;
+  try{sessionStorage.removeItem('crms_access');}catch(e){}
   document.querySelectorAll('.modal-overlay').forEach(function(m){m.classList.remove('open');});
   document.querySelectorAll('.view').forEach(function(v){v.classList.remove('active');});
   document.querySelectorAll('.sidebar-item').forEach(function(i){i.classList.remove('active');});
@@ -1879,6 +1978,7 @@ function showView(name,el){
     download:      previewDownload,
     modules:       renderModules,
     tasklist:      renderTaskList,
+    sessions:      renderSessionsView,
   };
   if (views[name]) views[name]();
 }
@@ -2836,7 +2936,7 @@ async function openDetail(releaseId) {
     'dv-company':  r.company          || '',
     'dv-service':  r.service          || '',
     // dv-start and dv-end removed
-    'dv-ag':       r.assignmentGroup  || '',
+    'dv-ag':       r.phaseAssignmentGroup || r.assignmentGroup || '',
     'dv-at':       r.assignedTo       || '',
     'dv-title':    r.title            || '',
     'dv-summary':  r.summary          || '',
@@ -3105,7 +3205,7 @@ async function exportSingleCR() {
     ['Company',          r.company || ''],
     ['Service',          r.service || ''],
     ['Requested By',     r.requestedBy || ''],
-    ['Assignment Group', r.assignmentGroup || ''],
+    ['Assignment Group', r.phaseAssignmentGroup || r.assignmentGroup || ''],
     ['Assigned To',      r.assignedTo || ''],
     ['Planned Start',    fmtDate(r.plannedStartDate)],
     ['Target End',       fmtDate(r.targetEndDate)],
@@ -3157,7 +3257,7 @@ async function printSingleCR() {
   var content = '<h1 style="color:#C8102E;font-family:Arial">Motherson CR: ' + r.releaseNumber + '</h1>';
   content += '<table style="border-collapse:collapse;width:100%;font-family:Arial;font-size:13px">';
   [['Title',r.title],['State',r.state],['Priority',PRIO_MAP[r.priority]||r.priority],['Company',r.company||'—'],
-   ['Requested By',r.requestedBy],['Assignment Group',r.assignmentGroup||'—'],['Planned Start',fmtDate(r.plannedStartDate)],['Summary',r.summary||'—']
+   ['Requested By',r.requestedBy],['Assignment Group',r.phaseAssignmentGroup||r.assignmentGroup||'—'],['Planned Start',fmtDate(r.plannedStartDate)],['Summary',r.summary||'—']
   ].forEach(function(pair) {
     content += '<tr><td style="padding:6px 10px;border:1px solid #ddd;font-weight:700;background:#f5f5f5;width:140px">'+pair[0]+'</td><td style="padding:6px 10px;border:1px solid #ddd">'+pair[1]+'</td></tr>';
   });
@@ -5955,18 +6055,91 @@ async function removeOracleUserAdmin(userId, name) {
 }
 
 (async function init() {
-  // Oracle EBS SSO — if tokens in sessionStorage, skip login screen
-  var storedAccess=null,storedRefresh=null;
-  try{storedAccess=sessionStorage.getItem('crms_access');storedRefresh=sessionStorage.getItem('crms_refresh');}catch(e){}
-  if(storedAccess){
-    accessToken=storedAccess;refreshToken=storedRefresh;
-    try{var meRes=await fetch(API_BASE+'/auth/me',{headers:{'Authorization':'Bearer '+accessToken}});if(meRes.ok){var meData=await meRes.json();if(meData&&meData.userId){await afterLogin(meData);return;}}}catch(e){}
-    try{sessionStorage.removeItem('crms_access');sessionStorage.removeItem('crms_refresh');}catch(e){}
-    accessToken=refreshToken=null;
+  // Try restore session from refresh cookie
+  try {
+    var refreshRes = await fetch(API_BASE + '/auth/refresh', {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (refreshRes.ok) {
+      var refreshData = await refreshRes.json();
+      if (refreshData && refreshData.accessToken) {
+        accessToken = refreshData.accessToken;
+        var meRes = await fetch(API_BASE + '/auth/me', {
+          headers: { 'Authorization': 'Bearer ' + accessToken },
+          credentials: 'include',
+        });
+        if (meRes.ok) {
+          var meData = await meRes.json();
+          if (meData && meData.userId) {
+            await afterLogin(meData);
+            return;
+          }
+        }
+      }
+    }
+  } catch(e) {}
+  // Also try old sessionStorage for SSO compatibility
+  var storedAccess = null;
+  try { storedAccess = sessionStorage.getItem('crms_access'); } catch(e) {}
+  if (storedAccess) {
+    accessToken = storedAccess;
+    try {
+      var meRes2 = await fetch(API_BASE + '/auth/me', {
+        headers: { 'Authorization': 'Bearer ' + accessToken },
+        credentials: 'include',
+      });
+      if (meRes2.ok) {
+        var meData2 = await meRes2.json();
+        if (meData2 && meData2.userId) { await afterLogin(meData2); return; }
+      }
+    } catch(e) {}
+    sessionStorage.removeItem('crms_access');
+    accessToken = null;
+  }
+  await initLogin();
+})();
+
+// ══════════════════════════════════════════════════════════════════════
+// FRONTEND IDLE TIMER — 30 minute inactivity logout
+// ══════════════════════════════════════════════════════════════════════
+var _idleTimer = null;
+var IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+
+function resetIdleTimer() {
+  if (_idleTimer) clearTimeout(_idleTimer);
+  _idleTimer = setTimeout(onIdleTimeout, IDLE_TIMEOUT_MS);
+}
+
+function onIdleTimeout() {
+  if (!currentUser) return; // not logged in
+  if (window._notifPollTimer) { clearInterval(window._notifPollTimer); window._notifPollTimer = null; }
+
+  // Call logout endpoint with token (for audit logging)
+  var tokenToSend = accessToken;
+  accessToken = null; currentUser = null;
+  try { sessionStorage.removeItem('crms_access'); } catch(e) {}
+
+  if (tokenToSend) {
+    fetch(API_BASE + '/auth/logout', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Authorization': 'Bearer ' + tokenToSend },
+    }).catch(function() {});
   }
 
-  // populateLoginDropdown removed — user types username manually
-  await initLogin();         // session restore takes priority
+  showSessionExpiredMessage('Your session has expired due to inactivity. Please sign in again.');
+  doLogout(false);
+}
+
+// Monitor all activity events
+(function() {
+  var events = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'click'];
+  events.forEach(function(evt) {
+    document.addEventListener(evt, function() {
+      if (currentUser) resetIdleTimer();
+    }, { passive: true });
+  });
 })();
 
 
@@ -6067,6 +6240,118 @@ async function submitToFSD() {
 
 
 // ══════════════════════════════════════════════════════════════════════
+// ACTIVE SESSIONS — User session management
+// ══════════════════════════════════════════════════════════════════════
+
+async function renderSessionsView() {
+  var wrap = document.getElementById('sessions-table-wrap');
+  var stats = document.getElementById('sessions-stat-cards');
+  if (!wrap) return;
+
+  wrap.innerHTML = '<div style="padding:40px;text-align:center;color:var(--grey-400)"><div class="spinner" style="margin:0 auto 12px;width:28px;height:28px;border:3px solid var(--grey-200);border-top-color:var(--red);border-radius:50%;animation:spin .6s linear infinite"></div>Loading sessions...</div>';
+
+  try {
+    var data = await GET('/auth/sessions');
+    if (!data || !Array.isArray(data.sessions)) {
+      wrap.innerHTML = '<div style="padding:40px;text-align:center;color:var(--grey-400)">Failed to load sessions</div>';
+      return;
+    }
+
+    var sessions = data.sessions;
+    var now = Date.now();
+    var activeCount = sessions.filter(function(s) { return s.STATUS === 'ACTIVE'; }).length;
+
+    // Stats cards
+    if (stats) {
+      stats.innerHTML =
+        '<div style="background:var(--white);border:1px solid var(--grey-200);border-radius:10px;padding:16px 20px;min-width:140px">' +
+          '<div style="font-size:11px;color:var(--grey-500);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Total Sessions</div>' +
+          '<div style="font-size:28px;font-weight:700;color:var(--grey-800)">' + sessions.length + '</div>' +
+        '</div>' +
+        '<div style="background:var(--white);border:1px solid var(--grey-200);border-radius:10px;padding:16px 20px;min-width:140px">' +
+          '<div style="font-size:11px;color:var(--grey-500);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Active</div>' +
+          '<div style="font-size:28px;font-weight:700;color:#16a34a">' + activeCount + '</div>' +
+        '</div>';
+    }
+
+    if (sessions.length === 0) {
+      wrap.innerHTML = '<div style="padding:40px;text-align:center;color:var(--grey-400)"><div style="font-size:32px;margin-bottom:8px">&#128274;</div><p>No active sessions</p></div>';
+      return;
+    }
+
+    // Current session ID from JWT
+    var currentSessionId = null;
+    try {
+      var payload = JSON.parse(atob(accessToken.split('.')[1]));
+      currentSessionId = payload.sid;
+    } catch(e) {}
+
+    // Parse user agent to friendly name
+    function parseUA(ua) {
+      if (!ua) return 'Unknown Device';
+      var browser = 'Unknown Browser';
+      var os = 'Unknown OS';
+      if (ua.includes('Firefox/')) browser = 'Firefox';
+      else if (ua.includes('Edg/'))   browser = 'Edge';
+      else if (ua.includes('Chrome/')) browser = 'Chrome';
+      else if (ua.includes('Safari/')) browser = 'Safari';
+      if (ua.includes('Windows'))   os = 'Windows';
+      else if (ua.includes('Mac OS'))   os = 'macOS';
+      else if (ua.includes('Linux'))    os = 'Linux';
+      else if (ua.includes('Android'))  os = 'Android';
+      else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS';
+      return browser + ' on ' + os;
+    }
+
+    function formatTime(iso) {
+      if (!iso) return '—';
+      var d = new Date(iso);
+      var diff = now - d.getTime();
+      if (diff < 60000) return 'Just now';
+      if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+      if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+      return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    var rows = '';
+    for (var i = 0; i < sessions.length; i++) {
+      var s = sessions[i];
+      var isCurrent = s.SESSION_ID === currentSessionId;
+      var isActive = s.STATUS === 'ACTIVE';
+      var statusColor = isActive ? '#16a34a' : '#9ca3af';
+      var statusBg = isActive ? '#f0fdf4' : '#f9fafb';
+      var rowBg = isCurrent ? '#eff6ff' : '';
+      var label = isCurrent ? ' <span style="background:#3b82f6;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-left:6px">THIS DEVICE</span>' : '';
+
+      rows += '<tr style="background:' + rowBg + ';border-bottom:1px solid var(--grey-100)">' +
+        '<td style="padding:12px 16px">' +
+          '<div style="font-weight:600;font-size:13px">' + parseUA(s.USER_AGENT) + label + '</div>' +
+          '<div style="font-size:11px;color:var(--grey-400);margin-top:2px">' + (s.IP_ADDRESS || 'Unknown IP') + '</div>' +
+        '</td>' +
+        '<td style="padding:12px 16px"><span style="display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;color:' + statusColor + ';background:' + statusBg + '">' + s.STATUS + '</span></td>' +
+        '<td style="padding:12px 16px;font-size:12px;color:var(--grey-500)">' + formatTime(s.LAST_ACTIVITY) + '</td>' +
+        '<td style="padding:12px 16px;font-size:12px;color:var(--grey-500)">' + formatTime(s.CREATED_AT) + '</td>' +
+      '</tr>';
+    }
+
+    wrap.innerHTML =
+      '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">' +
+        '<thead><tr style="background:var(--grey-50);border-bottom:2px solid var(--grey-200)">' +
+          '<th style="padding:10px 16px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--grey-500)">Device</th>' +
+          '<th style="padding:10px 16px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--grey-500)">Status</th>' +
+          '<th style="padding:10px 16px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--grey-500)">Last Activity</th>' +
+          '<th style="padding:10px 16px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--grey-500)">Created</th>' +
+        '</tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+      '</table></div>';
+
+  } catch(e) {
+    wrap.innerHTML = '<div style="padding:40px;text-align:center;color:var(--grey-400)">Failed to load sessions: ' + (e.message || e) + '</div>';
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
 // MODULES — Admin UI
 // ══════════════════════════════════════════════════════════════════════
 let cachedModules = [];
@@ -6112,8 +6397,8 @@ function renderModuleCard(m) {
 
   // Phase groups — show per-phase assignment
   var phaseGroups = m.phaseGroups || {};
-  var phaseLabels = { DRAFT:'Draft', RD:'RD', FSD:'FSD', DEV:'Dev', TESTING:'Testing', UAT:'UAT', DEPLOYMENT:'Deployment' };
-  var phaseOrder  = ['DRAFT','RD','FSD','DEV','TESTING','UAT','DEPLOYMENT'];
+  var phaseLabels = { DRAFT:'Draft', RD:'RD', FSD:'FSD', DEV:'Dev', TESTING:'Testing', UAT:'UAT', DEPLOYMENT:'Deployment', DBA_DEPLOYMENT:'DBA Deployment', OBSERVATION:'Observation' };
+  var phaseOrder  = ['DRAFT','RD','FSD','DEV','TESTING','UAT','DEPLOYMENT','DBA_DEPLOYMENT','OBSERVATION'];
   var groupsHtml = phaseOrder.map(function(pc) {
     var pg = phaseGroups[pc];
     if (!pg) return '<span style="font-size:11px;color:var(--grey-400);margin-right:6px">'+phaseLabels[pc]+': <em>none</em></span>';
@@ -6121,7 +6406,7 @@ function renderModuleCard(m) {
   }).join('');
   var reviewersByPhase2   = m.reviewersByPhase || {};
   var processOwnerByPhase = m.processOwnerByPhase || {};
-  var PHASE_LABELS2 = { RD:'RD', FSD:'FSD', DEV:'Dev', TESTING:'Testing', UAT:'UAT', DEPLOYMENT:'Deployment' };
+  var PHASE_LABELS2 = { RD:'RD', FSD:'FSD', DEV:'Dev', TESTING:'Testing', UAT:'UAT', DEPLOYMENT:'Deployment', DBA_DEPLOYMENT:'DBA Deployment', OBSERVATION:'Observation' };
   var reviewersHtml = Object.keys(reviewersByPhase2).length
     ? Object.entries(reviewersByPhase2).map(function(e) {
         var ph = e[0], rvs = e[1];
@@ -7702,7 +7987,7 @@ function openAddSubTask() {
   var phaseLabelsMap = {
     RD:'RD Task', FSD:'FSD Task', DEV:'Development Task',
     TESTING:'Testing Task', UAT:'UAT Task', DEPLOYMENT:'Deployment Task',
-    DBA_DEPLOYMENT:'DBA Deployment Task'
+    DBA_DEPLOYMENT:'DBA Deployment Task', OBSERVATION:'Observation Task'
   };
 
   // Auto-detect phase from current release state
@@ -7711,12 +7996,14 @@ function openAddSubTask() {
   // If state is an approval state, determine which phase we are about to complete
   if (!curPhase) {
     var s = release.state || '';
-    if      (s.includes('RD'))          curPhase = 'RD';
-    else if (s.includes('FSD'))         curPhase = 'FSD';
+    if      (s.includes('DBA'))         curPhase = 'DBA_DEPLOYMENT';
+    else if (s.includes('Observation')) curPhase = 'OBSERVATION';
     else if (s.includes('Deployment'))  curPhase = 'DEPLOYMENT';
     else if (s.includes('Development')) curPhase = 'DEV';
     else if (s.includes('Testing'))     curPhase = 'TESTING';
     else if (s.includes('UAT'))         curPhase = 'UAT';
+    else if (s.includes('FSD'))         curPhase = 'FSD';
+    else if (s.includes('RD'))          curPhase = 'RD';
   }
 
   if (!curPhase) {
@@ -8156,8 +8443,42 @@ function stateToPhaseCodeFE(state) {
     'Development Phase':'DEV','Testing Phase':'TESTING',
     'UAT Phase':'UAT','Deployment Phase':'DEPLOYMENT',
     'DBA Deployment Phase':'DBA_DEPLOYMENT',
+    'Observation Phase':'OBSERVATION',
   };
   return m[state] || null;
+}
+
+function getPhaseGroupForRelease(r) {
+  if (!r || !r.moduleId) { console.log('[PG] No moduleId', r); return ''; }
+  var curPhase = stateToPhaseCodeFE(r.state);
+  if (!curPhase) {
+    var s = r.state || '';
+    if      (s.includes('DBA'))         curPhase = 'DBA_DEPLOYMENT';
+    else if (s.includes('Observation')) curPhase = 'OBSERVATION';
+    else if (s.includes('Deployment'))  curPhase = 'DEPLOYMENT';
+    else if (s.includes('Development')) curPhase = 'DEV';
+    else if (s.includes('Testing'))     curPhase = 'TESTING';
+    else if (s.includes('UAT'))         curPhase = 'UAT';
+    else if (s.includes('FSD'))         curPhase = 'FSD';
+    else if (s.includes('RD'))          curPhase = 'RD';
+  }
+  console.log('[PG] r.moduleId='+r.moduleId+' r.state="'+r.state+'" resolvedPhase="'+curPhase+'" REF.modules.length='+(REF.modules||[]).length);
+  if (!curPhase) { console.log('[PG] Cannot resolve phase'); return ''; }
+  var mod = (REF.modules || []).find(function(m) { return Number(m.moduleId) === Number(r.moduleId); });
+  if (!mod) { console.log('[PG] Module not found for moduleId='+r.moduleId); return ''; }
+  console.log('[PG] Module found: "'+mod.moduleName+'" phaseGroupsAll keys='+Object.keys(mod.phaseGroupsAll||{}).join(','));
+  if (mod.phaseGroupsAll && mod.phaseGroupsAll[curPhase] && mod.phaseGroupsAll[curPhase].length) {
+    var grpName = mod.phaseGroupsAll[curPhase][0].groupName;
+    console.log('[PG] Found from phaseGroupsAll: "'+grpName+'"');
+    return grpName;
+  }
+  if (mod.phaseGroups && mod.phaseGroups[curPhase]) {
+    var grpName2 = mod.phaseGroups[curPhase].groupName;
+    console.log('[PG] Found from phaseGroups: "'+grpName2+'"');
+    return grpName2;
+  }
+  console.log('[PG] No group found for phase "'+curPhase+'" in module');
+  return '';
 }
 
 function sortSubTasks(col) {

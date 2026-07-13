@@ -1,6 +1,6 @@
 'use strict';
 
-try { require('dotenv').config(); } catch(e) {}
+try { require('dotenv').config({ path: require('path').join(__dirname, '../../.env') }); } catch(e) {}
 
 const oracledb = require('oracledb');
 const fs       = require('fs');
@@ -32,6 +32,7 @@ oracledb.fetchAsString = [oracledb.CLOB];
 oracledb.fetchAsBuffer = [oracledb.BLOB];
 
 let pool;
+let poolSecondary;
 
 // Dead connection detection
 function isDeadConn(err) {
@@ -42,6 +43,10 @@ function isDeadConn(err) {
 
 async function getFreshConn() {
   return oracledb.getConnection('crmsPool');
+}
+
+async function getFreshSecondaryConn() {
+  return oracledb.getConnection('crmsPoolSecondary');
 }
 
 // ── connect ───────────────────────────────────────────────────────────
@@ -68,13 +73,23 @@ console.log("DB_PASSWORD length =", dbPass?.length);
   });
 
   logger.info('Oracle pool ready → ' + dbConn);
+
+  // Attempt to create secondary (DB2) pool for multi-DB authentication
+  try {
+    await connectSecondary();
+  } catch (err) {
+    logger.warn('[db] Secondary pool not available — single-DB mode: ' + (err.message || '').split('\n')[0]);
+  }
+
   return pool;
 }
 
 async function disconnect() {
-  if (!pool) return;
-  await pool.close(10);
-  pool = null;
+  if (pool) {
+    await pool.close(10);
+    pool = null;
+  }
+  await disconnectSecondary();
 }
 
 // ── Request-scoped connection ─────────────────────────────────────────
@@ -83,24 +98,10 @@ const asyncLocalStorage = (() => {
 })();
 
 async function requestConnection(req, res, next) {
-  const skip = ['/auth/users','/auth/login','/auth/refresh'];
-  if (skip.some(p => (req.path||'').endsWith(p))) return next();
-  if (!pool || !asyncLocalStorage) return next();
-
-  let conn, released = false;
-  const release = async () => {
-    if (released) return; released = true;
-    if (conn) { try { await conn.close(); } catch(e) {} }
-  };
-  try {
-    conn = await getFreshConn();
-    res.on('finish', release);
-    res.on('close',  release);
-    asyncLocalStorage.run(conn, next);
-  } catch(err) {
-    logger.warn('[db] requestConnection failed — per-query mode: ' + err.message);
-    next();
-  }
+  // Per-request connection disabled — each DB call gets its own connection
+  // and closes it immediately. This prevents connection pool exhaustion
+  // caused by conn.close() hanging in thin mode.
+  next();
 }
 
 // ── executeOne: run sql on conn, retry with fresh conn if dead ────────
@@ -198,10 +199,108 @@ async function callFunction(sql, binds = {}) {
   }
 }
 
+// ═════════════════════════════════════════════════════════════════════
+// SECONDARY (DB2) POOL — for multi-DB authentication
+// ═════════════════════════════════════════════════════════════════════
+// These methods mirror the existing helpers but use the secondary pool.
+// They are used exclusively by authController for logging in users
+// whose accounts live in a different Oracle DB instance.
+// ═════════════════════════════════════════════════════════════════════
+
+async function connectSecondary() {
+  if (poolSecondary) return poolSecondary;
+  const dbUser2 = process.env.DB2_USER;
+  const dbPass2 = process.env.DB2_PASSWORD;
+  const dbConn2 = process.env.DB2_CONNECTION_STRING;
+  if (!dbUser2 || !dbPass2 || !dbConn2) {
+    logger.warn('[db] DB2 not configured (DB2_USER/DB2_PASSWORD/DB2_CONNECTION_STRING) — skipping secondary pool');
+    return null;
+  }
+  poolSecondary = await oracledb.createPool({
+    user: dbUser2, password: dbPass2, connectionString: dbConn2,
+    poolMin:          parseInt(process.env.DB_POOL_MIN,  10) || 1,
+    poolMax:          parseInt(process.env.DB_POOL_MAX,  10) || 5,
+    poolIncrement:    parseInt(process.env.DB_POOL_INCREMENT, 10) || 1,
+    poolTimeout:      parseInt(process.env.DB_POOL_TIMEOUT,   10) || 60,
+    poolPingInterval: 10,
+    poolAlias:        'crmsPoolSecondary',
+    stmtCacheSize:    100,
+    connectTimeout:   15,
+  });
+  logger.info('Oracle secondary pool ready → ' + dbConn2);
+  return poolSecondary;
+}
+
+async function disconnectSecondary() {
+  if (!poolSecondary) return;
+  await poolSecondary.close(10);
+  poolSecondary = null;
+}
+
+async function executeOneSecondary(conn, sql, binds, opts) {
+  try {
+    return await conn.execute(sql, binds, opts);
+  } catch(err) {
+    if (!isDeadConn(err)) throw err;
+    logger.warn('[db] Dead secondary conn, retrying: ' + err.message.split('\n')[0]);
+    const fresh = await getFreshSecondaryConn();
+    try    { return await fresh.execute(sql, binds, opts); }
+    finally { try { await fresh.close(); } catch(e) {} }
+  }
+}
+
+async function executeSecondary(sql, binds = {}, opts = {}) {
+  if (!poolSecondary) throw new Error('Secondary DB pool not connected');
+  const o = { outFormat: oracledb.OUT_FORMAT_OBJECT, autoCommit: false, ...opts };
+  const conn = await getFreshSecondaryConn();
+  try    { return await executeOneSecondary(conn, sql, binds, o); }
+  finally { try { await conn.close(); } catch(e) {} }
+}
+
+async function executeWithCommitSecondary(sql, binds = {}, opts = {}) {
+  if (!poolSecondary) throw new Error('Secondary DB pool not connected');
+  const o = { outFormat: oracledb.OUT_FORMAT_OBJECT, autoCommit: false, ...opts };
+  const conn = await getFreshSecondaryConn();
+  try    { return await executeOneSecondary(conn, sql, binds, { ...o, autoCommit: true }); }
+  finally { try { await conn.close(); } catch(e) {} }
+}
+
+async function querySecondary(sql, binds = {}) {
+  return (await executeSecondary(sql, binds)).rows || [];
+}
+
+async function queryOneSecondary(sql, binds = {}) {
+  return (await querySecondary(sql, binds))[0] || null;
+}
+
+async function callFunctionSecondary(sql, binds = {}) {
+  if (!poolSecondary) throw new Error('Secondary DB pool not connected');
+  const conn = await getFreshSecondaryConn();
+  try {
+    return await conn.execute(sql, binds, { autoCommit: false });
+  } catch(err) {
+    if (!isDeadConn(err)) throw err;
+    logger.warn('[db] Dead secondary conn in callFunction, retrying: ' + err.message.split('\n')[0]);
+    const fresh = await getFreshSecondaryConn();
+    try    { return await fresh.execute(sql, binds, { autoCommit: false }); }
+    finally { try { await fresh.close(); } catch(e) {} }
+  } finally {
+    try { await conn.close(); } catch(e) {}
+  }
+}
+
+function isSecondaryReady() {
+  return !!poolSecondary;
+}
+
 module.exports = {
   connect, disconnect, requestConnection,
   execute, executeWithCommit, transaction, query, queryOne,
   callFunction,
+  connectSecondary, disconnectSecondary, isSecondaryReady,
+  executeSecondary, executeWithCommitSecondary,
+  querySecondary, queryOneSecondary,
+  callFunctionSecondary,
   // Expose oracledb constants so callers can use BIND_IN/BIND_OUT/STRING etc.
   oracledb,
 };

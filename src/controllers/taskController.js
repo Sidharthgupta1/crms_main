@@ -79,6 +79,17 @@ async function create(req, res, next) {
     );
 
     logger.info('Task created',{taskId,taskNum,releaseId:rid});
+
+    // ── Email: Notify subtask assigned (fire-and-forget) ──────────
+    setImmediate(() => {
+      try {
+        const emailSvc = require('../services/emailService');
+        if (assignedToUserId) {
+          emailSvc.sendSubtaskAssigned(rid, taskId, phase, num(assignedToUserId), reqBy).catch(() => {});
+        }
+      } catch (e) { logger.warn('[Email] require failed', { e: e.message }); }
+    });
+
     return res.status(201).json({ taskId, taskNumber:taskNum, phase, taskType, state:'Open', shortDescription, message:'Task created' });
   } catch(err) { next(err); }
 }

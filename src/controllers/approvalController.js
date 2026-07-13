@@ -149,6 +149,14 @@ async function triggerApproval(
     ).catch(function(){});
   }
 
+  // ── Email: Notify process owner, L1 approvers, and requester ──────────
+  setImmediate(() => {
+    try {
+      const emailSvc = require('../services/emailService');
+      emailSvc.sendPhaseStarted(rid, phaseCode, reqBy).catch(() => {});
+    } catch (e) { logger.warn('[Email] require failed', { e: e.message }); }
+  });
+
   logger.info('Approval triggered', { releaseId:rid, phaseCode, level:1, approverName });
   return {
     newState,
@@ -164,6 +172,7 @@ async function triggerApproval(
     }),
   };
 }
+
 // Ensure pending approval rows exist for this level when none have been created yet
 async function ensureLevelApprovalRecords(
   rid,
@@ -298,9 +307,6 @@ async function approve(req, res, next) {
     }
 
     // ── CHECK NEXT LEVEL REQUIREMENT BEFORE COMMITTING APPROVAL ──────
-    // If a next level exists and no pending records exist there, the user
-    // MUST provide selectedNextApproverId.  Fail early so the user's
-    // current-level approval is NOT committed and left in limbo.
     const nextLevel = curLevel + 1;
     const hasNext   = forceComplete ? false : await flowQ.hasFlowLevel(mid, phaseCode, nextLevel);
     let nextApprovers = [];
@@ -331,7 +337,6 @@ async function approve(req, res, next) {
     }
 
     // ── NOW COMMIT THE APPROVAL ──────────────────────────────────────
-    // Mark this level approved; skip other pending approvers at same level
     await db.executeWithCommit(
       "UPDATE crms_release_approvals SET status='Approved',comments='"+safe(comments)+"',actioned_at=SYSDATE "+
       "WHERE approval_id="+num(myApproval.APPROVAL_ID), {}
@@ -347,8 +352,19 @@ async function approve(req, res, next) {
       (forceComplete ? ' (admin — moved to Development)' : '')+"')", {}
     );
 
+    // ── Email: Notify approval completed ──────────────────────────────
+    setImmediate(async () => {
+      try {
+        const emailSvc = require('../services/emailService');
+        await emailSvc.sendApprovalCompleted(rid, phaseCode, curLevel, uid, !hasNext,
+          hasNext ? nextApprovers.map(a => num(a.APPROVER_USER_ID)) : []);
+        if (!hasNext) {
+          await emailSvc.sendPhaseCompleted(rid, phaseCode);
+        }
+      } catch (e) { logger.warn('[Email] approve notification', { e: e.message }); }
+    });
+
     if (forceComplete) {
-      // Skip any remaining pending levels — admin completes FSD in one step
       await db.executeWithCommit(
         "UPDATE crms_release_approvals SET status='Skipped',actioned_at=SYSDATE "+
         "WHERE release_id="+rid+" AND phase_code='"+phaseCode+"' AND status='Pending'", {}
@@ -426,7 +442,6 @@ async function approve(req, res, next) {
       try {
         if (release.MODULE_ID) {
           const midStr = num(release.MODULE_ID);
-          // RD approved → FSD phase; FSD approved → DEV; etc.
           const phaseToNext = { 'RD':'FSD', 'FSD':'DEV', 'DEV':'TESTING', 'TESTING':'UAT', 'UAT':'DEPLOYMENT', 'DEPLOYMENT':'DBA_DEPLOYMENT' };
           const nextPhaseCode = phaseToNext[phaseCode];
           if (nextPhaseCode) {
@@ -455,6 +470,18 @@ async function approve(req, res, next) {
       const nextPhase = rc.stateToPhaseCode(afterState);
       if (nextPhase && release.MODULE_ID) {
         await rc.assignPhaseTasks(rid, release.MODULE_ID, nextPhase, uid);
+      }
+
+      // ── Email: Notify next phase started ──────────────────────────
+      const phaseToNext = { 'RD':'FSD', 'FSD':'DEV', 'DEV':'TESTING', 'TESTING':'UAT', 'UAT':'DEPLOYMENT', 'DEPLOYMENT':'DBA_DEPLOYMENT' };
+      const nextPc = phaseToNext[phaseCode];
+      if (nextPc && release.MODULE_ID) {
+        setImmediate(async () => {
+          try {
+            const emailSvc = require('../services/emailService');
+            await emailSvc.sendPhaseStarted(rid, nextPc, uid);
+          } catch (e) { logger.warn('[Email] next phase notification', { e: e.message }); }
+        });
       }
 
       message = phaseCode+' fully approved. Moved to '+afterState+'.';
@@ -529,6 +556,14 @@ async function reject(req, res, next) {
       reqUserId+",'"+phaseCode+" Rejected','"+
       safe(relNum+' '+phaseCode+' rejected by '+req.user.fullName+': '+comments.substring(0,80))+"',"+rid+")", {}
     );
+
+    // ── Email: Notify rejection ─────────────────────────────────────
+    setImmediate(() => {
+      try {
+        const emailSvc = require('../services/emailService');
+        emailSvc.sendApprovalRejected(rid, phaseCode, curLevel, uid, comments).catch(() => {});
+      } catch (e) { logger.warn('[Email] require failed', { e: e.message }); }
+    });
 
     return res.json({ message:'Rejected. Release returned to '+returnState+'.', newState:returnState });
   } catch(err) { next(err); }
