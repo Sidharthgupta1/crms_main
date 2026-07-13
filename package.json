@@ -7,11 +7,15 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "db:migrate": "node scripts/migrate.js",
+    "db:migrate:observation": "node scripts/migrate_observation_phase.js",
     "db:seed": "node scripts/seed.js",
     "db:reset": "node scripts/migrate.js && node scripts/seed.js",
     "test": "jest --runInBand --forceExit"
   },
   "dependencies": {
+    "@azure/identity": "^4.13.1",
+    "@azure/msal-node": "^5.3.1",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
     "@vercel/analytics": "^2.0.1",
     "bcryptjs": "^2.4.3",
     "compression": "^1.7.4",
@@ -22,6 +26,7 @@
     "express-rate-limit": "^7.3.1",
     "express-validator": "^7.1.0",
     "helmet": "^7.1.0",
+    "isomorphic-fetch": "^3.0.0",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
     "oracledb": "^6.4.0",
@@ -29,7 +34,7 @@
     "winston-daily-rotate-file": "^5.0.0"
   },
   "devDependencies": {
-    "jest": "^29.7.0",
+    "jest": "^25.0.0",
     "nodemon": "^3.1.4",
     "supertest": "^7.0.0"
   },

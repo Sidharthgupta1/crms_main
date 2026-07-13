@@ -1,56 +1,18 @@
 'use strict';
 
-/**
- * CRMS SSO Controller — Oracle EBS R12 FND_USER Integration
- *
- * Since CRMS backend connects to the SAME Oracle DB as EBS (as APPS user),
- * we can query FND_USER directly — no HMAC signatures needed.
- *
- * FLOW:
- *   1. EBS PL/SQL generates a one-time token:
- *        INSERT INTO crms_sso_tokens(token, fnd_user_id, expires_at)
- *        VALUES(SYS_GUID(), :fnd_user_id, SYSDATE + 1/144)  -- 10-min expiry
- *
- *   2. EBS opens browser URL:
- *        http://YOUR-CRMS-SERVER:3000/api/v1/auth/fnd-sso?token=<guid>
- *
- *   3. CRMS backend:
- *        a. Reads token from crms_sso_tokens
- *        b. Gets fnd_user_id → looks up FND_USER.USER_NAME
- *        c. Matches FND_USER.USER_NAME to crms_users.fnd_user_name
- *        d. Issues CRMS JWT → auto-login, no password needed
- *
- * SECURITY:
- *   - Token is a UUID (SYS_GUID) — unguessable
- *   - Token expires in 10 minutes
- *   - Token is deleted after first use (one-time use)
- *   - No password or credential is ever transmitted
- */
-
 const crypto = require('crypto');
 const jwt    = require('jsonwebtoken');
 const db     = require('../config/db');
 const logger = require('../config/logger');
+const session = require('../services/sessionService');
+const { signAccess, signRefresh, setRefreshCookie } = require('../controllers/authController');
 
 function safe(s) { return String(s||'').replace(/'/g,"''"); }
 function num(n)  { return String(parseInt(n,10)||0); }
 
-function signAccess(userId, role) {
-  return jwt.sign({ sub: userId, role },
-    process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '8h' });
-}
-function signRefresh(userId) {
-  return jwt.sign({ sub: userId },
-    process.env.JWT_REFRESH_SECRET, { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d' });
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /auth/fnd-token
 // Called by Oracle EBS PL/SQL (server-side) to create a one-time SSO token.
-// The PL/SQL package calls this before redirecting the user's browser.
-//
-// Body: { fndUserId: 12345 }   OR   { fndUserName: 'JOHN.SMITH' }
-// Returns: { token: 'ABC...', expiresAt: '...' }
 // ─────────────────────────────────────────────────────────────────────────────
 async function createFndToken(req, res, next) {
   try {
@@ -60,7 +22,6 @@ async function createFndToken(req, res, next) {
       return res.status(400).json({ error: 'fndUserId or fndUserName required' });
     }
 
-    // Look up the FND user to confirm they exist
     let fndUser;
     if (fndUserId) {
       fndUser = await db.queryOne(
@@ -78,7 +39,6 @@ async function createFndToken(req, res, next) {
       return res.status(404).json({ error: 'Oracle EBS user not found or inactive' });
     }
 
-    // Now confirm this Oracle user is mapped to a CRMS user
     const crmsUser = await db.queryOne(
       "SELECT user_id, full_name, role FROM crms_users " +
       "WHERE UPPER(fnd_user_name)='" + safe((fndUser.USER_NAME||'').toUpperCase()) + "' " +
@@ -93,14 +53,12 @@ async function createFndToken(req, res, next) {
       });
     }
 
-    // Generate a secure one-time token (UUID via SYS_GUID equivalent)
     const token = crypto.randomBytes(32).toString('hex');
 
-    // Store in crms_sso_tokens with 10-minute expiry
     await db.executeWithCommit(
       "INSERT INTO crms_sso_tokens(token, fnd_user_id, crms_user_id, created_at, expires_at) " +
       "VALUES('" + token + "'," + num(fndUser.USER_ID) + "," + num(crmsUser.USER_ID) + "," +
-      "SYSDATE, SYSDATE + 10/1440)", {}   // 10 minutes
+      "SYSDATE, SYSDATE + 10/1440)", {}
     );
 
     logger.info('SSO token created', { fndUserName: fndUser.USER_NAME, crmsUserId: crmsUser.USER_ID });
@@ -118,7 +76,7 @@ async function createFndToken(req, res, next) {
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /auth/fnd-sso?token=<hex>
 // Browser lands here after EBS redirects.
-// Validates the token, issues CRMS JWT, redirects to app.
+// Creates session, sets cookie, returns access token in memory only.
 // ─────────────────────────────────────────────────────────────────────────────
 async function fndSso(req, res, next) {
   try {
@@ -128,7 +86,6 @@ async function fndSso(req, res, next) {
       return res.status(400).send(errorPage('Invalid SSO token format.'));
     }
 
-    // Look up and validate token
     const tokenRow = await db.queryOne(
       "SELECT t.token, t.crms_user_id, t.expires_at, t.used, " +
       "u.initials, u.full_name, u.role, u.is_active " +
@@ -138,57 +95,56 @@ async function fndSso(req, res, next) {
     );
 
     if (!tokenRow) {
-      return res.status(401).send(errorPage(
-        'SSO token not found. It may have already been used or never existed.'
-      ));
+      return res.status(401).send(errorPage('SSO token not found. It may have already been used.'));
     }
 
     if (tokenRow.USED === 1 || tokenRow.USED === '1') {
-      return res.status(401).send(errorPage(
-        'This SSO link has already been used. Please click the menu item again in Oracle EBS.'
-      ));
+      return res.status(401).send(errorPage('This SSO link has already been used.'));
     }
 
-    // Check expiry
     const now     = new Date();
     const expires = new Date(tokenRow.EXPIRES_AT);
     if (now > expires) {
-      return res.status(401).send(errorPage(
-        'SSO link has expired (valid for 10 minutes). Please click the menu item again in Oracle EBS.'
-      ));
+      return res.status(401).send(errorPage('SSO link has expired (valid for 10 minutes).'));
     }
 
     if (!tokenRow.IS_ACTIVE) {
-      return res.status(403).send(errorPage(
-        'Your CRMS account is inactive. Contact your CRMS administrator.'
-      ));
+      return res.status(403).send(errorPage('Your CRMS account is inactive.'));
     }
 
-    // ── Mark token as used (one-time use) ──────────────────────────
+    // Mark token as used
     await db.executeWithCommit(
       "UPDATE crms_sso_tokens SET used=1, used_at=SYSDATE WHERE token='" + safe(token) + "'", {}
     );
 
-    // ── Log the login ───────────────────────────────────────────────
+    // Log the login
     const uid = num(tokenRow.CRMS_USER_ID);
-    await db.executeWithCommit(
-      "UPDATE crms_users SET last_login=SYSDATE WHERE user_id=" + uid, {}
-    );
+    await db.executeWithCommit("UPDATE crms_users SET last_login=SYSDATE WHERE user_id=" + uid, {});
     await db.executeWithCommit(
       "INSERT INTO crms_audit(action,performed_by,cr_number,details) VALUES(" +
       "'Login'," + uid + ",'--','Oracle EBS SSO login: " + safe(tokenRow.FULL_NAME) + "')", {}
     );
 
-    // ── Issue CRMS JWT tokens ───────────────────────────────────────
-    const accessToken  = signAccess(tokenRow.CRMS_USER_ID, tokenRow.ROLE);
-    const refreshToken = signRefresh(tokenRow.CRMS_USER_ID);
+    // Create session in DB
+    const sess = await session.createSession(tokenRow.CRMS_USER_ID, null, req);
+    const sessionId = sess.sessionId;
+
+    // Issue JWT tokens WITH session_id
+    const accessToken  = signAccess(tokenRow.CRMS_USER_ID, tokenRow.ROLE, sessionId);
+    const refreshToken = signRefresh(tokenRow.CRMS_USER_ID, sessionId);
+
+    // Hash and update session
+    await session.rotateSession(sessionId, refreshToken);
+
+    // Set refresh cookie via Set-Cookie header (HttpOnly only works via headers)
+    setRefreshCookie(res, refreshToken);
 
     logger.info('EBS FND SSO login success', {
       crmsUserId: tokenRow.CRMS_USER_ID,
       fullName:   tokenRow.FULL_NAME,
+      sessionId,
     });
 
-    // ── Return HTML that stores tokens and redirects to CRMS ────────
     return res.send(`<!DOCTYPE html>
 <html>
 <head>
@@ -216,9 +172,9 @@ async function fndSso(req, res, next) {
   <script>
     (function() {
       try {
-        sessionStorage.setItem('crms_access',  ${JSON.stringify(accessToken)});
-        sessionStorage.setItem('crms_refresh', ${JSON.stringify(refreshToken)});
-        // Redirect to CRMS main page after a brief moment
+        // Store access token in memory only (sessionStorage for SSO redirect compatibility)
+        sessionStorage.setItem('crms_access', ${JSON.stringify(accessToken)});
+        // Refresh cookie is set via Set-Cookie header (HttpOnly) — JavaScript never reads it
         setTimeout(function() { window.location.replace('/'); }, 800);
       } catch(e) {
         document.querySelector('.msg').innerHTML =
@@ -234,12 +190,9 @@ async function fndSso(req, res, next) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /auth/fnd-users
-// Returns all FND_USER records that are NOT yet mapped to CRMS users.
-// Used by CRMS Admin to see who needs to be linked.
 // ─────────────────────────────────────────────────────────────────────────────
 async function listFndUsers(req, res, next) {
   try {
-    // All active FND users
     const fndUsers = await db.query(
       "SELECT u.user_id, u.user_name, u.description, u.email_address, " +
       "NVL(u.end_date, TO_DATE('9999-12-31','YYYY-MM-DD')) AS end_date, " +
@@ -268,8 +221,6 @@ async function listFndUsers(req, res, next) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /auth/link-fnd-user
-// Admin links an FND_USER to a CRMS user.
-// Body: { crmsUserId: 5, fndUserName: 'JOHN.SMITH' }
 // ─────────────────────────────────────────────────────────────────────────────
 async function linkFndUser(req, res, next) {
   try {
@@ -278,7 +229,6 @@ async function linkFndUser(req, res, next) {
       return res.status(400).json({ error: 'crmsUserId and fndUserName required' });
     }
 
-    // Verify FND user exists
     const fndUser = await db.queryOne(
       "SELECT user_id, user_name FROM fnd_user " +
       "WHERE UPPER(user_name)='" + safe(fndUserName.toUpperCase()) + "' " +
@@ -288,7 +238,6 @@ async function linkFndUser(req, res, next) {
       return res.status(404).json({ error: 'Oracle EBS user "' + fndUserName + '" not found or inactive' });
     }
 
-    // Check not already mapped to another CRMS user
     const existing = await db.queryOne(
       "SELECT user_id, full_name FROM crms_users " +
       "WHERE UPPER(fnd_user_name)='" + safe(fndUserName.toUpperCase()) + "' " +
@@ -300,7 +249,6 @@ async function linkFndUser(req, res, next) {
       });
     }
 
-    // Update the mapping
     await db.executeWithCommit(
       "UPDATE crms_users SET fnd_user_name='" + safe(fndUserName.toUpperCase()) + "' " +
       "WHERE user_id=" + num(crmsUserId), {}
@@ -342,42 +290,26 @@ function errorPage(message) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /ebs-launch
-// This is the URL registered in Oracle EBS Function HTML Call field.
-// EBS opens this in a new browser window when user clicks the menu item.
-//
-// HOW IT WORKS:
-//   Browser arrives here from EBS with the Oracle ICX session cookie.
-//   We query FND_USER using the ICX session to identify the user,
-//   create a one-time token, and redirect to CRMS with auto-login.
-//
-//   If we cannot identify the user from cookies (direct access),
-//   we show a loading page that calls the fnd-token API.
 // ─────────────────────────────────────────────────────────────────────────────
 async function ebsLaunch(req, res, next) {
   try {
-    // Method 1: Try to identify user from ICX_SESSION cookie
-    // Oracle EBS sets this cookie when user logs in
     const icxSession = req.cookies && (
       req.cookies['ICX_SESSION'] ||
       req.cookies['ICX_HR_SESSION'] ||
       req.cookies['EBS_SESSION']
     );
 
-    // Method 2: Check for Oracle username in request header
-    // (Set by Apache mod_proxy: RequestHeader set X-Oracle-Username "%{REMOTE_USER}s")
     const headerUser = req.headers['x-oracle-username'] ||
                        req.headers['x-remote-user'] ||
                        req.headers['x-forwarded-user'];
 
     let fndUserName = null;
 
-    // Try header first (most reliable when Apache proxied)
     if (headerUser && headerUser !== '%{REMOTE_USER}s' && headerUser.trim()) {
       fndUserName = headerUser.trim().toUpperCase();
       logger.info('EBS launch via header', { fndUserName });
     }
 
-    // Try ICX session cookie
     if (!fndUserName && icxSession) {
       try {
         const sessionRow = await db.queryOne(
@@ -395,7 +327,6 @@ async function ebsLaunch(req, res, next) {
       }
     }
 
-    // If we identified the user server-side — create token and redirect
     if (fndUserName) {
       const crmsUser = await db.queryOne(
         "SELECT user_id, initials, full_name, role, is_active " +
@@ -404,8 +335,7 @@ async function ebsLaunch(req, res, next) {
       );
 
       if (crmsUser && crmsUser.IS_ACTIVE) {
-        // Create one-time token
-        const token = require('crypto').randomBytes(32).toString('hex');
+        const token = crypto.randomBytes(32).toString('hex');
         const fndUser = await db.queryOne(
           "SELECT user_id FROM fnd_user WHERE UPPER(user_name)='" +
           safe(fndUserName.toUpperCase()) + "' AND ROWNUM=1", {}
@@ -417,13 +347,10 @@ async function ebsLaunch(req, res, next) {
           num(crmsUser.USER_ID) + ",SYSDATE,SYSDATE+10/1440)", {}
         );
 
-        // Redirect to fnd-sso with token
         return res.redirect(302, '/api/v1/auth/fnd-sso?token=' + token);
       }
     }
 
-    // Fallback: serve a smart launch page that identifies the user client-side
-    // This works when cookies are accessible from the same domain
     return res.send(launchPage());
 
   } catch(err) {
@@ -473,28 +400,22 @@ function launchPage() {
   </div>
   <script>
   (function() {
-    // Check if we already have a valid CRMS session
     var stored = null;
     try { stored = sessionStorage.getItem('crms_access'); } catch(e) {}
 
     if (stored) {
-      // Already logged in — go straight to CRMS
       document.getElementById('msg').textContent = 'Already logged in. Redirecting...';
       setTimeout(function() { window.location.replace('/'); }, 500);
       return;
     }
 
-    // Ask the backend to check Oracle cookies and identify the user
-    // The backend reads ICX_SESSION cookie (same domain) and looks up FND_USER
     fetch('/api/v1/auth/ebs-session-check', { credentials: 'include' })
       .then(function(r) { return r.json(); })
       .then(function(data) {
         if (data.redirectTo) {
           document.getElementById('msg').textContent = 'Oracle user found. Logging in...';
           window.location.replace(data.redirectTo);
-        } else {
-          showError();
-        }
+        } else { showError(); }
       })
       .catch(function() { showError(); });
 
@@ -503,8 +424,6 @@ function launchPage() {
       document.getElementById('msg').style.display  = 'none';
       document.getElementById('err').style.display  = 'block';
     }
-
-    // Timeout after 8 seconds
     setTimeout(showError, 8000);
   })();
   </script>
@@ -514,8 +433,6 @@ function launchPage() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /auth/ebs-session-check
-// Called by the launch page JavaScript — checks ICX cookies server-side
-// and returns a redirect URL if user is identified
 // ─────────────────────────────────────────────────────────────────────────────
 async function ebsSessionCheck(req, res, next) {
   try {
@@ -530,7 +447,6 @@ async function ebsSessionCheck(req, res, next) {
       return res.json({ found: false, reason: 'No Oracle session cookie' });
     }
 
-    // Try to resolve session to FND_USER
     let fndUserName = null;
     try {
       const row = await db.queryOne(
@@ -548,7 +464,6 @@ async function ebsSessionCheck(req, res, next) {
       return res.json({ found: false, reason: 'Session not found in ICX_SESSIONS' });
     }
 
-    // Find CRMS user
     const crmsUser = await db.queryOne(
       "SELECT user_id, full_name, role, is_active FROM crms_users " +
       "WHERE UPPER(fnd_user_name)='" + safe(fndUserName.toUpperCase()) + "'", {}
@@ -558,8 +473,7 @@ async function ebsSessionCheck(req, res, next) {
       return res.json({ found: false, reason: 'Oracle user not mapped in CRMS', fndUserName });
     }
 
-    // Create token and return redirect
-    const token = require('crypto').randomBytes(32).toString('hex');
+    const token = crypto.randomBytes(32).toString('hex');
     const fndU  = await db.queryOne(
       "SELECT user_id FROM fnd_user WHERE UPPER(user_name)='" +
       safe(fndUserName.toUpperCase()) + "' AND ROWNUM=1", {}
@@ -580,7 +494,7 @@ async function ebsSessionCheck(req, res, next) {
 
   } catch(err) {
     logger.error('ebs-session-check error: ' + err.message);
-    return res.json({ found: false, reason: 'Internal error: ' + err.message });
+    return res.json({ found: false, reason: 'Internal error' });
   }
 }
 

@@ -1,6 +1,6 @@
 'use strict';
 
-try { require('dotenv').config(); } catch(e) {}
+try { require('dotenv').config({ path: require('path').join(__dirname, '../.env') }); } catch(e) {}
 
 const express  = require('express');
 const cors     = require('cors');
@@ -12,6 +12,7 @@ const routes   = require('./routes');
 const { errorHandler } = require('./middleware/errorHandler');
 const cookieParser = require('cookie-parser');
 const app        = express();
+app.set('etag', false);
 const PORT       = parseInt(process.env.PORT, 10) || 3000;
 const API_PREFIX = process.env.API_PREFIX || '/api/v1';
 
@@ -92,6 +93,9 @@ app.get('/debug-db', async (req, res) => {
 // All other API calls return 503 until Oracle pool is ready
 app.use(API_PREFIX, (req, res, next) => {
   if (req.path === '/auth/users') return next();   // always serve from cache
+  if (req.path === '/auth/login') return next();   // login handles its own DB checks
+  if (req.path === '/auth/refresh') return next(); // refresh reads cookie, returns 401 if invalid
+  if (req.path === '/health') return next();
   if (!dbReady) {
     return res.status(503).json({
       error: 'Database connecting — please wait a moment and retry',
@@ -101,8 +105,14 @@ app.use(API_PREFIX, (req, res, next) => {
   next();
 });
 
-// ── One Oracle connection per request (performance) ───────────────────
-// requestConnection skips /auth/users and /auth/login automatically
+// ── Cache headers for API routes ─────────────────────────────────────
+app.use(API_PREFIX, (req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.set('Surrogate-Control', 'no-store');
+  next();
+});
 app.use(API_PREFIX, db.requestConnection);
 
 // ── API routes ────────────────────────────────────────────────────────
@@ -140,6 +150,16 @@ async function connectWithRetry() {
     } catch(e) {
       logger.warn('Cache warm-up skipped:', e.message);
     }
+
+    // Clean stale sessions on startup (expires sessions past idle/expiry time)
+    try {
+      const session = require('./services/sessionService');
+      const expired = await session.cleanupExpiredSessions();
+      if (expired > 0) logger.info('Startup: expired ' + expired + ' stale sessions');
+    } catch(e) {
+      logger.warn('Startup session cleanup skipped: ' + e.message);
+    }
+
   } catch(err) {
     dbReady = false;
 

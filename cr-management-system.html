@@ -128,6 +128,7 @@
   .badge-testing{background:#fffde7;color:#f57f17}
   .badge-uat{background:#e0f7fa;color:#006064}
   .badge-deployment{background:#e8eaf6;color:#1a237e}
+  .badge-observation{background:#e0f2f1;color:#00695c}
   .badge-closed{background:#e0e0e0;color:#424242}
   .badge-cancelled{background:#ffebee;color:var(--red)}
   .priority-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:5px}
@@ -657,6 +658,18 @@ select.tl-cell {
       <p>Sign in with your Oracle EBS username</p>
       <div class="field"><label>Oracle Username</label><input type="text" id="login-user" placeholder="Enter your Oracle username" autocomplete="username" autocorrect="off" autocapitalize="characters" spellcheck="false" onkeydown="if(event.key==='Enter')document.getElementById('login-pass').focus()" style="text-transform:uppercase"/></div>
       <div class="field"><label>Password</label><input type="password" id="login-pass" placeholder="Enter password" onkeydown="if(event.key==='Enter')doLogin()"  /></div>
+      <div class="field"><label>Database</label>
+        <div style="display:flex;gap:24px;padding:10px 12px;border:1.5px solid var(--grey-200);border-radius:var(--radius)">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:14px;font-family:var(--font);color:var(--grey-800)">
+            <input type="radio" name="login-db" value="PRIMARY" checked style="accent-color:var(--red);width:16px;height:16px"/>
+            Primary Database
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:14px;font-family:var(--font);color:var(--grey-800)">
+            <input type="radio" name="login-db" value="SECONDARY" style="accent-color:var(--red);width:16px;height:16px"/>
+            Secondary Database
+          </label>
+        </div>
+      </div>
       <button class="btn-primary" onclick="doLogin()">Sign In &rarr;</button>
 
       <div class="auth-error" id="auth-error" style="display:none"></div>
@@ -752,6 +765,10 @@ select.tl-cell {
         <div class="sidebar-item" onclick="showView('oracle-users',this)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
           Oracle Users
+        </div>
+        <div class="sidebar-item" onclick="showView('sessions',this)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a4 4 0 0 0-8 0v2"/><line x1="2" y1="13" x2="22" y2="13"/></svg>
+          Active Sessions
         </div>
       </div>
     </div>
@@ -1219,6 +1236,26 @@ select.tl-cell {
         </div>
       </div>
 
+      <!-- ACTIVE SESSIONS -->
+      <div class="view" id="view-sessions">
+        <div class="page-header">
+          <div>
+            <h1>Active Sessions</h1>
+            <p>Manage your login sessions across devices</p>
+          </div>
+          <div style="display:flex;gap:10px">
+            <button class="btn btn-outline" onclick="renderSessionsView()" style="border-color:#3b82f6;color:#3b82f6">&#8635; Refresh</button>
+          </div>
+        </div>
+        <div id="sessions-stat-cards" style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap"></div>
+        <div id="sessions-table-wrap">
+          <div style="padding:40px;text-align:center;color:var(--grey-400)">
+            <div style="font-size:32px;margin-bottom:8px">&#128274;</div>
+            <p>Click <strong>Refresh</strong> to load sessions</p>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -1340,6 +1377,7 @@ select.tl-cell {
           <button class="btn btn-outline btn-sm" id="dm-hold-btn"   onclick="advanceState('On Hold')" style="display:none">⏸ Put On Hold</button>
           <button class="btn btn-outline btn-sm" id="dm-unhold-btn" onclick="doUnhold()" style="display:none;border-color:var(--green);color:var(--green)">▶ Unhold</button>
           <button class="btn btn-outline btn-sm" id="dm-sendback-btn" onclick="openSendBackModal(_currentRelease)" style="display:none;border-color:var(--amber);color:#856404">↩ Send Back</button>
+          <button class="btn btn-green btn-sm" id="dm-close-cr-btn" onclick="closeCR()" style="display:none">✓ Close CR</button>
           <button class="btn btn-outline btn-sm" onclick="advanceState('Cancelled')">✕ Cancel CR</button>
           <button class="btn btn-red btn-sm" id="dm-advance-btn" onclick="advanceState()">Advance →</button>
         </div>
@@ -1423,8 +1461,6 @@ select.tl-cell {
   </div>
 </div>
 <div class="detail-tab-content" id="tab-subtasks"><div id="subtasks-container" style="padding:4px 0"></div></div>
-  <div class="table-wrap"><table><thead><tr><th>Number</th><th>Type</th><th>State</th><th>Description</th><th>Group</th><th>Assigned To</th></tr></thead><tbody id="tasks-uat"><tr class="empty-row"><td colspan="6">No tasks yet</td></tr></tbody></table></div>
-</div>
 <div class="detail-tab-content" id="tab-comments">
   <div class="comment-box">
     <div class="comment-list" id="comment-list"><div style="padding:20px;text-align:center;color:var(--grey-400);font-size:13px">No comments yet</div></div>
@@ -1464,20 +1500,7 @@ select.tl-cell {
 </div>
 </div>
 
-<!-- INPUT MODAL -->
-<div class="modal-overlay" id="input-modal">
-<div class="modal" id="input-modal-inner" style="max-width:560px">
-<div class="modal-header">
-<h2 id="input-modal-title">Confirm</h2>
-<button class="modal-close" onclick="closeModal('input-modal')">&#215;</button>
-</div>
-<div class="modal-body" id="input-modal-body" style="padding:20px 24px"></div>
-<div class="modal-footer">
-<button class="btn btn-outline" onclick="closeModal('input-modal')">Cancel</button>
-<button class="btn btn-red" id="input-modal-save">Confirm</button>
-</div>
-</div>
-</div>
+
 <script>
 
 
@@ -1510,6 +1533,7 @@ if (d) { d.textContent = 'Async Error: ' + msg; d.style.display = 'block'; }
     'editGroupMembers','openAddCompany','openAddService','openAddModule',
     'uploadRdTemplate','editPhaseGroups','editReviewers','editProcessOwners',
     'editModuleGroups','editModuleUsers','editApprovalFlow','promptApproveReject',
+    'renderApprovalsList','approveFromList','rejectFromList',
     'renderOracleUserMgmt','syncAllOracleUsers','provisionOracleUser',
     'deactivateUser','reactivateUser','resetUserPassword','makeAdmin',
     'renderModules','renderMyPhaseTasks','saveTaskEdits','_doSaveTaskEdits',
@@ -1550,6 +1574,8 @@ const STATES = [
   'Development Phase','Testing Phase','UAT Phase',
   'Deployment Approval L1','Deployment Approval L2','Deployment Approval L3',
   'Deployment Phase',
+  'DBA Deployment Phase',
+  'Observation Phase',
   'On Hold','Closed','Cancelled'
 ];
 const NEXT_STATE = {
@@ -1560,6 +1586,8 @@ const NEXT_STATE = {
   'Testing Phase':     'UAT Phase',
   'UAT Phase':         'Deployment Phase',
   'Deployment Phase':  null,
+  'DBA Deployment Phase': 'Observation Phase',
+  'Observation Phase': null,
   'On Hold':           'Development Phase',
 };
 const APPROVAL_STATES = ['Draft','RD Phase','FSD Phase','Deployment Phase'];
@@ -1570,8 +1598,8 @@ const PHASE_TBODY= {BRD:'tasks-brd',FSD:'tasks-fsd',Dev:'tasks-dev',Testing:'tas
 
 // ── Runtime state ─────────────────────────────────────────────────────
 let currentUser    = null;   // { userId, initials, fullName, role, groups }
-let accessToken    = null;   // JWT Bearer token
-let refreshToken   = null;   // JWT refresh token
+let accessToken    = null;   // JWT Bearer token (memory only — never persisted)
+// refreshToken is stored in HttpOnly cookie — never in JS
 let activeDetailId = null;   // releaseId currently open in detail modal
 let activeTaskPhase= null;   // phase tab currently open
 let assignmentShown= false;
@@ -1585,7 +1613,7 @@ var _fndUsers = [];
 // ══════════════════════════════════════════════════════════════════════
 async function api(method, path, body, retry) {
   if (retry === undefined) retry = true;
-  var opts = { method: method, headers: { 'Content-Type': 'application/json' } };
+  var opts = { method: method, headers: { 'Content-Type': 'application/json' }, credentials: 'include' };
   if (accessToken) opts.headers['Authorization'] = 'Bearer ' + accessToken;
   if (body)        opts.body = JSON.stringify(body);
 
@@ -1608,10 +1636,29 @@ async function api(method, path, body, retry) {
   }
 
   // Auto-refresh on 401 TOKEN_EXPIRED — only when user is actually logged in
-  if (res.status === 401 && retry && refreshToken && currentUser) {
-    var ok = await tryRefresh();
-    if (ok) return api(method, path, body, false);
-    doLogout(false); return null;  // don't clear fields — user might be re-logging in
+  if (res.status === 401 && retry && currentUser) {
+    var errCode = null;
+    var errMsg  = null;
+    try { var errClone = await res.clone().json(); errCode = errClone.code; errMsg = errClone.error || errClone.message; } catch(e) {}
+    if (errCode === 'TOKEN_EXPIRED') {
+      var ok = await tryRefresh();
+      if (ok) return api(method, path, body, false);
+      // Refresh failed — force logout
+      doLogout(false); return null;
+    }
+    // Session expiry / revocation — handle ALL session codes identically per spec
+    if (errCode === 'SESSION_IDLE_TIMEOUT') {
+      doLogout(false);
+      showSessionExpiredMessage('Your session has expired due to inactivity. Please sign in again.');
+      return null;
+    }
+    if (errCode === 'SESSION_EXPIRED' || errCode === 'INVALID_REFRESH_TOKEN' || errCode === 'SESSION_REVOKED' || errCode === 'SESSION_INVALID' || errCode === 'SESSION_NOT_FOUND') {
+      doLogout(false);
+      showSessionExpiredMessage(errMsg || 'Your session is no longer valid. Please sign in again.');
+      return null;
+    }
+    // Any other 401 — force logout
+    doLogout(false); return null;
   }
 
   if (!res.ok) {
@@ -1621,7 +1668,7 @@ async function api(method, path, body, retry) {
       showDbConnectingBanner();
       return null;
     }
-    if (res.status !== 403) toast(err.error || 'Error ' + res.status, true);
+    if (res.status !== 403 || method !== 'GET') toast(err.error || 'Error ' + res.status, true);
     return null;
   }
   if (res.status === 204) return null;
@@ -1638,49 +1685,87 @@ async function tryRefresh() {
   try {
     const res = await fetch(API_BASE + '/auth/refresh', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken }),
+      credentials: 'include',
     });
-    if (!res.ok) return false;
+    if (!res.ok) {
+      try {
+        var errData = await res.json();
+        if (errData.code === 'SESSION_IDLE_TIMEOUT') {
+          doLogout(false);
+          showSessionExpiredMessage('Your session has expired due to inactivity. Please sign in again.');
+        } else if (errData.code === 'SESSION_EXPIRED') {
+          doLogout(false);
+          showSessionExpiredMessage('Your session has expired. Please sign in again.');
+        } else if (errData.code === 'SESSION_REVOKED' || errData.code === 'INVALID_REFRESH_TOKEN' || errData.code === 'SESSION_INVALID' || errData.code === 'SESSION_NOT_FOUND') {
+          doLogout(false);
+          showSessionExpiredMessage(errData.error || 'Your session is no longer valid. Please sign in again.');
+        }
+      } catch(e) {}
+      return false;
+    }
     const data = await res.json();
-    accessToken  = data.accessToken;
-    refreshToken = data.refreshToken;
-    sessionStorage.setItem('crms_access',  accessToken);
-    sessionStorage.setItem('crms_refresh', refreshToken);
+    accessToken = data.accessToken;
     return true;
   } catch { return false; }
+}
+
+function showSessionExpiredMessage(msg) {
+  var el = document.getElementById('auth-error');
+  if (el) {
+    el.textContent = msg || 'Your session has expired. Please sign in again.';
+    el.style.display = 'block';
+    el.style.color = '#c8102e';
+    el.style.fontSize = '13px';
+    el.style.marginTop = '10px';
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════
 // AUTH
 // ══════════════════════════════════════════════════════════════════════
 async function initLogin() {
-  // Try to restore previous session from sessionStorage
-  // IMPORTANT: Use raw fetch (NOT api()) so we never trigger doLogout() here.
-  // doLogout() clears the login form fields which would erase what the user typed.
-  const savedAccess  = sessionStorage.getItem('crms_access');
-  const savedRefresh = sessionStorage.getItem('crms_refresh');
-  if (savedAccess && savedRefresh) {
-    try {
-      var res = await fetch(API_BASE + '/auth/me', {
-        headers: { 'Authorization': 'Bearer ' + savedAccess }
-      });
-      if (res.ok) {
-        var me = await res.json();
-        if (me && me.userId) {
-          accessToken  = savedAccess;
-          refreshToken = savedRefresh;
-          await afterLogin(me);
-          return;
+  // Try to restore session from refresh cookie
+  try {
+    var res = await fetch(API_BASE + '/auth/refresh', {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (res.ok) {
+      var data = await res.json();
+      if (data && data.accessToken) {
+        accessToken = data.accessToken;
+        // Now fetch user info
+        var meRes = await fetch(API_BASE + '/auth/me', {
+          headers: { 'Authorization': 'Bearer ' + accessToken },
+          credentials: 'include',
+        });
+        if (meRes.ok) {
+          var me = await meRes.json();
+          if (me && me.userId) {
+            await afterLogin(me);
+            return;
+          }
         }
       }
-    } catch(e) {
-      // Network error or server down — just show login form, don't clear fields
     }
-    // Session invalid — silently clear tokens only, NOT the form fields
+  } catch(e) {}
+  // Also try old sessionStorage for SSO compatibility
+  var storedAccess = null;
+  try { storedAccess = sessionStorage.getItem('crms_access'); } catch(e) {}
+  if (storedAccess) {
+    accessToken = storedAccess;
+    try {
+      var meRes2 = await fetch(API_BASE + '/auth/me', {
+        headers: { 'Authorization': 'Bearer ' + accessToken },
+        credentials: 'include',
+      });
+      if (meRes2.ok) {
+        var meData2 = await meRes2.json();
+        if (meData2 && meData2.userId) { await afterLogin(meData2); return; }
+      }
+    } catch(e) {}
     sessionStorage.removeItem('crms_access');
-    sessionStorage.removeItem('crms_refresh');
-    accessToken = refreshToken = null;
+    accessToken = null;
   }
   // Show login form — already visible by default
 }
@@ -1693,6 +1778,8 @@ async function doLogin() {
 
   var username = (userEl.value || '').trim().toUpperCase();
   var pass     = (passEl.value || '').trim();
+  var dbEl     = document.querySelector('input[name="login-db"]:checked');
+  var database = (dbEl ? dbEl.value : 'PRIMARY');
 
   errEl.style.display = 'none'; errEl.textContent = '';
 
@@ -1706,7 +1793,8 @@ async function doLogin() {
     var res = await fetch(API_BASE + '/auth/login', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ username: username, password: pass })
+      credentials: 'include',
+      body:    JSON.stringify({ username, password: pass, database })
     });
 
     if (res.status === 503) {
@@ -1729,7 +1817,8 @@ async function doLogin() {
 
     result = await res.json();
   } catch(e) {
-    showLoginError('⚠ Cannot connect to server' + ' Is backend running?');
+    console.error('[LOGIN FETCH ERROR]', e);
+    showLoginError('⚠ Cannot connect to server — ' + (e.message || e) + ' Is backend running?');
     return;
   } finally {
     btn.disabled    = false;
@@ -1741,11 +1830,8 @@ async function doLogin() {
     return;
   }
 
-  // Success
-  accessToken  = result.accessToken;
-  refreshToken = result.refreshToken;
-  sessionStorage.setItem('crms_access',  accessToken);
-  sessionStorage.setItem('crms_refresh', refreshToken);
+  // Success — refresh token is in HttpOnly cookie, only store access token in memory
+  accessToken = result.accessToken;
   errEl.style.display = 'none';
   if (result.isNewUser) {
     setTimeout(function() {
@@ -1798,13 +1884,18 @@ async function afterLogin(user) {
   checkApproverStatus();
   checkReviewerStatus();
   setTimeout(initUIEnhancements, 300);
+  resetIdleTimer();
 }
 
 async function doLogout(clearFields) {
   if(window._notifPollTimer){clearInterval(window._notifPollTimer);window._notifPollTimer=null;}
-  try{await POST('/auth/logout');}catch(e){}
-  accessToken=refreshToken=null; currentUser=null; activeDetailId=null; _currentRelease=null;
-  try{sessionStorage.removeItem('crms_access');sessionStorage.removeItem('crms_refresh');}catch(e){}
+  try{
+    var opts = { method:'POST', credentials:'include', headers:{} };
+    if(accessToken) opts.headers['Authorization'] = 'Bearer ' + accessToken;
+    await fetch(API_BASE + '/auth/logout', opts);
+  }catch(e){}
+  accessToken=null; currentUser=null; activeDetailId=null; _currentRelease=null;
+  try{sessionStorage.removeItem('crms_access');}catch(e){}
   document.querySelectorAll('.modal-overlay').forEach(function(m){m.classList.remove('open');});
   document.querySelectorAll('.view').forEach(function(v){v.classList.remove('active');});
   document.querySelectorAll('.sidebar-item').forEach(function(i){i.classList.remove('active');});
@@ -1887,6 +1978,7 @@ function showView(name,el){
     download:      previewDownload,
     modules:       renderModules,
     tasklist:      renderTaskList,
+    sessions:      renderSessionsView,
   };
   if (views[name]) views[name]();
 }
@@ -1905,7 +1997,9 @@ function stateBadge(s) {
   else if (s === 'Testing Phase')                                         cls = 'badge-testing';
   else if (s === 'UAT Phase')                                             cls = 'badge-uat';
   else if (s === 'Deployment Phase')                                      cls = 'badge-deployment';
+  else if (s === 'DBA Deployment Phase')                                  cls = 'badge-deployment';
   else if (s.includes('Deployment Approval') || s.includes('Deployment Awaiting')) cls = 'badge-awaiting';
+  else if (s === 'Observation Phase')                                    cls = 'badge-observation';
   else if (s === 'Closed')                                                cls = 'badge-closed';
   else if (s === 'Cancelled')                                             cls = 'badge-cancelled';
   else if (s === 'On Hold')                                               cls = 'badge-hold';
@@ -2788,6 +2882,7 @@ async function openDetail(releaseId) {
     toast('Could not load release details — the server returned an error', true);
     return;
   }
+  _currentRelease = r;
   try {
   document.getElementById('dm-number').textContent      = r.releaseNumber;
   document.getElementById('dm-state-badge').innerHTML   = stateBadge(r.state);
@@ -2798,18 +2893,23 @@ async function openDetail(releaseId) {
   var holdBtn    = document.getElementById('dm-hold-btn');
   var unholdBtn  = document.getElementById('dm-unhold-btn');
   var sbBtn      = document.getElementById('dm-sendback-btn');
+  var closeCrBtn = document.getElementById('dm-close-cr-btn');
   var isAwaiting = r.state && (r.state.toLowerCase().includes('awaiting') || r.state.includes('Approval L'));
   var isTerminal = r.state === 'Closed' || r.state === 'Cancelled';
   var isOnHold   = r.state === 'On Hold';
-  if (holdBtn)   holdBtn.style.display  = (!isOnHold && !isTerminal && !isAwaiting) ? '' : 'none';
+  var isObservation = r.state === 'Observation Phase';
+  var isCrOwner  = currentUser && r.crOwnerUserId && String(r.crOwnerUserId) === String(currentUser.userId);
+  if (holdBtn)   holdBtn.style.display  = (!isOnHold && !isTerminal && !isAwaiting && !isObservation) ? '' : 'none';
   if (unholdBtn) unholdBtn.style.display = isOnHold ? '' : 'none';
   var backTarget = SEND_BACK_MAP_FE[r.state];
   if (sbBtn) {
-    sbBtn.style.display = (backTarget && !isTerminal) ? '' : 'none';
-    if (backTarget) sbBtn.textContent = '\u21a9 Send Back to ' + backTarget;
+    var canSendBack = backTarget && !isTerminal && (!isObservation || isCrOwner);
+    sbBtn.style.display = canSendBack ? '' : 'none';
+    if (backTarget && canSendBack) sbBtn.textContent = '\u21a9 Send Back to ' + backTarget;
   }
+  if (closeCrBtn) closeCrBtn.style.display = (isObservation && isCrOwner) ? '' : 'none';
   if (btn) {
-    if (isAwaiting || isTerminal) {
+    if (isAwaiting || isTerminal || isObservation) {
       btn.style.display = 'none';
     } else {
       btn.style.display = '';
@@ -2836,7 +2936,7 @@ async function openDetail(releaseId) {
     'dv-company':  r.company          || '',
     'dv-service':  r.service          || '',
     // dv-start and dv-end removed
-    'dv-ag':       r.assignmentGroup  || '',
+    'dv-ag':       r.phaseAssignmentGroup || r.assignmentGroup || '',
     'dv-at':       r.assignedTo       || '',
     'dv-title':    r.title            || '',
     'dv-summary':  r.summary          || '',
@@ -2847,27 +2947,46 @@ async function openDetail(releaseId) {
   });
 
   // Populate RD Phase Details — show section only if any field has data
-  // Show current pending approver
+  // Show selected approval pipeline for awaiting states
   var pendingApprEl = document.getElementById('dv-pending-approver');
   if (pendingApprEl) {
     var isAwaiting = r.state && (r.state.toLowerCase().includes('awaiting') || r.state.includes('Approval L'));
     var trail      = r.approvalTrail || [];
     var curLvl     = Number(r.currentApprovalLevel) || 0;
-    var pending    = trail.find(function(a) {
-      return String(a.status || '').toLowerCase() === 'pending' &&
-        (!curLvl || Number(a.levelOrder) === curLvl);
-    }) || trail.find(function(a){ return String(a.status || '').toLowerCase() === 'pending'; });
-    if (isAwaiting && pending) {
-      var lvl = pending.levelOrder || pending.level || 1;
+    if (!curLvl && r.state) {
+      var lvlMatch = r.state.match(/L(\d+)$/);
+      curLvl = lvlMatch ? parseInt(lvlMatch[1], 10) : 0;
+    }
+    var phaseCode = '';
+    if (r.state.includes('Draft Awaiting'))       phaseCode = 'DRAFT';
+    else if (r.state.includes('RD Awaiting'))     phaseCode = 'RD';
+    else if (r.state.includes('FSD Awaiting'))    phaseCode = 'FSD';
+    else if (r.state.includes('Deployment'))      phaseCode = 'DEPLOYMENT';
+    var pipeline = trail.filter(function(a) {
+      var pc = String(a.phaseCode || a.flowType || '').toUpperCase();
+      return pc === phaseCode || (!pc && phaseCode);
+    }).slice().sort(function(a, b) { return Number(a.levelOrder) - Number(b.levelOrder); });
+
+    if (isAwaiting && pipeline.length) {
       pendingApprEl.innerHTML =
-        '\u23f3 Pending <strong>Level '+lvl+'</strong> approval with: '+
-        '<strong>'+(pending.approverName||'\u2014')+'</strong>';
+        '\u23f3 Pending '+phaseCode+' approval: '+
+        pipeline.map(function(a) {
+          var isCur = Number(a.levelOrder) === Number(curLvl);
+          return '<strong>L'+a.levelOrder+': '+(a.approverName||'\u2014')+'</strong>'+
+            (isCur ? ' <span style="color:#92400e">(current)</span>' : '');
+        }).join(' &nbsp;\u2192&nbsp; ');
       pendingApprEl.style.display = '';
     } else if (isAwaiting) {
       pendingApprEl.innerHTML = '\u23f3 Pending approval...';
       pendingApprEl.style.display = '';
       GET('/releases/'+(r.releaseId||activeDetailId)+'/approval-status').then(function(ap) {
-        if (ap && ap.pendingWith) {
+        if (ap && ap.pipeline && ap.pipeline.length) {
+          pendingApprEl.innerHTML =
+            '\u23f3 Pending '+phaseCode+' approval: '+
+            ap.pipeline.map(function(a) {
+              return '<strong>L'+a.levelOrder+': '+a.approverName+'</strong>';
+            }).join(' &nbsp;\u2192&nbsp; ');
+        } else if (ap && ap.pendingWith) {
           pendingApprEl.innerHTML =
             '\u23f3 Pending <strong>Level '+(ap.levelOrder||1)+'</strong> approval with: '+
             '<strong>'+ap.pendingWith+'</strong>';
@@ -2909,6 +3028,7 @@ async function openDetail(releaseId) {
   document.querySelectorAll('.detail-tab-content').forEach(t => t.classList.remove('active'));
   document.querySelector('.detail-tab').classList.add('active');
   document.getElementById('tab-overview').classList.add('active');
+
   renderAttachments();
 
   // Hide reviewer dropdown for terminal/awaiting states
@@ -2941,6 +3061,8 @@ function renderPhaseBar(cur) {
     'UAT Phase',
     'Deployment Approval',  // L1/L2 pre-deployment approval
     'Deployment Phase',
+    'DBA Deployment',
+    'Observation',
     'Closed'
   ];
 
@@ -2955,6 +3077,8 @@ function renderPhaseBar(cur) {
     'UAT Phase':           'UAT',
     'Deployment Approval': 'Deploy Appvl',
     'Deployment Phase':    'Deployment',
+    'DBA Deployment':      'DBA Deploy',
+    'Observation':         'Observation',
     'Closed':              'Closed',
   };
 
@@ -2970,6 +3094,8 @@ function renderPhaseBar(cur) {
   else if (cur2 === 'UAT Phase')                                         activeStep = 'UAT Phase';
   else if (cur2.includes('Deployment Approval')||cur2.includes('Deployment Awaiting')) activeStep = 'Deployment Approval';
   else if (cur2 === 'Deployment Phase')                                  activeStep = 'Deployment Phase';
+  else if (cur2 === 'DBA Deployment Phase')                              activeStep = 'DBA Deployment';
+  else if (cur2 === 'Observation Phase')                                 activeStep = 'Observation';
   else if (cur2 === 'Closed' || cur2 === 'Cancelled')                   activeStep = 'Closed';
   else                                                                   activeStep = cur2;
 
@@ -3022,6 +3148,7 @@ function switchTab(el, tabId) {
   if (tabId === 'tab-attachments') renderAttachments();
   if (tabId === 'tab-subtasks')    renderSubTasksById(activeDetailId);
 }
+
 
 // advanceState defined below
 
@@ -3078,7 +3205,7 @@ async function exportSingleCR() {
     ['Company',          r.company || ''],
     ['Service',          r.service || ''],
     ['Requested By',     r.requestedBy || ''],
-    ['Assignment Group', r.assignmentGroup || ''],
+    ['Assignment Group', r.phaseAssignmentGroup || r.assignmentGroup || ''],
     ['Assigned To',      r.assignedTo || ''],
     ['Planned Start',    fmtDate(r.plannedStartDate)],
     ['Target End',       fmtDate(r.targetEndDate)],
@@ -3130,7 +3257,7 @@ async function printSingleCR() {
   var content = '<h1 style="color:#C8102E;font-family:Arial">Motherson CR: ' + r.releaseNumber + '</h1>';
   content += '<table style="border-collapse:collapse;width:100%;font-family:Arial;font-size:13px">';
   [['Title',r.title],['State',r.state],['Priority',PRIO_MAP[r.priority]||r.priority],['Company',r.company||'—'],
-   ['Requested By',r.requestedBy],['Assignment Group',r.assignmentGroup||'—'],['Planned Start',fmtDate(r.plannedStartDate)],['Summary',r.summary||'—']
+   ['Requested By',r.requestedBy],['Assignment Group',r.phaseAssignmentGroup||r.assignmentGroup||'—'],['Planned Start',fmtDate(r.plannedStartDate)],['Summary',r.summary||'—']
   ].forEach(function(pair) {
     content += '<tr><td style="padding:6px 10px;border:1px solid #ddd;font-weight:700;background:#f5f5f5;width:140px">'+pair[0]+'</td><td style="padding:6px 10px;border:1px solid #ddd">'+pair[1]+'</td></tr>';
   });
@@ -3375,7 +3502,7 @@ function populateDownloadFilters() {
     'FSD Phase','FSD Awaiting Approval L1','FSD Awaiting Approval L2','FSD Awaiting Approval L3',
     'Development Phase','Testing Phase','UAT Phase',
     'Deployment Approval L1','Deployment Approval L2','Deployment Approval L3',
-    'Deployment Phase','On Hold','Closed','Cancelled'
+    'Deployment Phase','DBA Deployment Phase','Observation Phase','On Hold','Closed','Cancelled'
   ];
   var PRIORITIES = [
     {v:'1',l:'1 – Critical'},{v:'2',l:'2 – High'},
@@ -4397,7 +4524,7 @@ function renderCrOwnerField(release) {
   var isLocked   = !!release.crOwnerUserId;
   var isFSDOrLater = ['FSD Phase','FSD Awaiting Approval L1','FSD Awaiting Approval L2',
     'FSD Awaiting Approval L3','Development Phase','Testing Phase','UAT Phase',
-    'Deployment Phase','Closed','Cancelled'].indexOf(release.state) >= 0;
+    'Deployment Phase','DBA Deployment Phase','Observation Phase','Closed','Cancelled'].indexOf(release.state) >= 0;
 
   // Always show the wrap from FSD Phase onwards
   wrap.style.display = isFSDOrLater ? '' : 'none';
@@ -4645,6 +4772,47 @@ async function saveRdField(fieldKey) {
 // ══════════════════════════════════════════════════════════════════════
 // RD APPROVAL MODAL
 // ══════════════════════════════════════════════════════════════════════
+function buildApproverPickerHtml(fieldId, levelNum, users, options) {
+  options = options || {};
+  var label = options.label || ('Level ' + levelNum + ' Approver');
+  var hint = options.hint || '';
+  var required = options.required !== false;
+  var requiredMark = required ? ' <span style="color:var(--red)">*</span>' : '';
+  var fieldClass = options.fieldClass || 'form-field';
+  var fieldStyle = options.fieldStyle || '';
+  var labelStyle = 'font-size:12px;font-weight:600;color:var(--grey-600);text-transform:uppercase;letter-spacing:.4px';
+  var wrapOpen = '<div class="'+fieldClass+'"'+(fieldStyle ? ' style="'+fieldStyle+'"' : '')+'>';
+
+  if (!users || !users.length) {
+    return wrapOpen+
+      '<label style="'+labelStyle+'">'+label+requiredMark+'</label>'+
+      '<div style="padding:8px 10px;color:var(--grey-400);font-size:13px;font-style:italic">No approvers mapped at this level</div>'+
+      '</div>';
+  }
+
+  if (users.length === 1) {
+    var sole = users[0];
+    return wrapOpen+
+      '<label style="'+labelStyle+'">'+label+requiredMark+'</label>'+
+      '<div style="padding:8px 10px;background:#f8fafc;border:1.5px solid var(--grey-200);border-radius:var(--radius);font-size:13px;font-weight:600;color:var(--grey-800)">'+
+      sole.fullName+'</div>'+
+      '<input type="hidden" id="'+fieldId+'" value="'+sole.userId+'">'+
+      (hint && users.length > 1 ? '<div style="font-size:11px;color:var(--grey-500);margin-top:4px">'+hint+'</div>' : '')+
+      '</div>';
+  }
+
+  var optsHtml = users.map(function(u) {
+    return '<option value="'+u.userId+'">'+u.fullName+'</option>';
+  }).join('');
+  return wrapOpen+
+    '<label style="'+labelStyle+'">'+label+requiredMark+'</label>'+
+    '<select id="'+fieldId+'" style="width:100%;padding:8px 10px;border:1.5px solid var(--grey-200);border-radius:var(--radius);font-family:var(--font);font-size:13px">'+
+    '<option value="">— Select Approver —</option>'+optsHtml+
+    '</select>'+
+    (hint ? '<div style="font-size:11px;color:var(--grey-500);margin-top:4px">'+hint+'</div>' : '')+
+    '</div>';
+}
+
 async function openRdApprovalModal(release) {
   // Map current state to phase code for the API
   var phaseForApproval = (release && release.state) ? ({
@@ -4666,6 +4834,9 @@ async function openRdApprovalModal(release) {
   });
   var sortedLvls = Object.keys(levelMap).map(Number).sort();
   var hasOptions  = sortedLvls.length > 0;
+  // Submitter only picks Level 1 — higher levels are chosen by the prior approver on approve
+  var submitLevels = sortedLvls.filter(function(lv) { return lv === 1; });
+  if (!submitLevels.length && sortedLvls.length) submitLevels = [sortedLvls[0]];
 
   // Phase display name
   var phaseLabel = { RD:'RD Phase', FSD:'FSD Phase', DEPLOYMENT:'Deployment Phase' }[phaseForApproval] || phaseForApproval;
@@ -4677,29 +4848,11 @@ async function openRdApprovalModal(release) {
     (moduleName ? ' &nbsp;|&nbsp; <strong>Module:</strong> '+moduleName : '')+
     '</div>';
 
-  // Build one dropdown per level
+  // Build Level 1 field only (submitter picks their manager)
   var sectionsHtml = '';
   if (hasOptions) {
-    sectionsHtml = sortedLvls.map(function(lv) {
-      var lvUsers = levelMap[lv];
-      var opts = lvUsers.map(function(u) {
-        return '<option value="'+u.userId+'">'+u.fullName+'</option>';
-      }).join('');
-      if (!opts) opts = '<option value="" disabled>No approvers mapped at this level</option>';
-      var isMandatory = (lv === sortedLvls[0]);
-      return '<div class="form-field">'+
-        '<label style="font-size:12px;font-weight:600;color:var(--grey-600);text-transform:uppercase;letter-spacing:.4px">'+
-          'Level '+lv+' Approver'+
-          (isMandatory
-            ? ' <span style="color:var(--red)">*</span>'
-            : ' <span style="font-size:11px;color:var(--grey-400);font-weight:400;text-transform:none">(optional)</span>'
-          )+
-        '</label>'+
-        '<select id="rd-approver-l'+lv+'" '+
-          'style="width:100%;padding:8px 10px;border:1.5px solid var(--grey-200);border-radius:var(--radius);font-family:var(--font);font-size:13px">'+
-          '<option value="">— Select Approver —</option>'+opts+
-        '</select>'+
-      '</div>';
+    sectionsHtml = submitLevels.map(function(lv) {
+      return buildApproverPickerHtml('rd-approver-l'+lv, lv, levelMap[lv] || []);
     }).join('');
   } else {
     sectionsHtml =
@@ -4731,17 +4884,26 @@ async function openRdApprovalModal(release) {
       await doAdvance({});
       return;
     }
-    // Level 1 is mandatory
-    var firstLv  = sortedLvls[0];
-    var firstSel = document.getElementById('rd-approver-l'+firstLv);
-    var approverId = firstSel ? firstSel.value : '';
-    if (!approverId) {
-      toast('Please select a Level '+firstLv+' approver', true);
-      return;
+    var selectedApproverIds = {};
+    var selectedApproversByLevel = {};
+    for (var i = 0; i < submitLevels.length; i++) {
+      var lv = submitLevels[i];
+      var sel = document.getElementById('rd-approver-l'+lv);
+      var approverId = sel ? sel.value : '';
+      if (!approverId) {
+        toast('Please select a Level '+lv+' approver', true);
+        return;
+      }
+      selectedApproverIds['L'+lv] = parseInt(approverId,10);
+      selectedApproversByLevel[lv] = parseInt(approverId,10);
     }
     saveBtn.disabled = true;
     closeModal('input-modal');
-    await doAdvance({ selectedApproverId: parseInt(approverId,10) });
+    await doAdvance({
+      selectedApproverId: selectedApproversByLevel[submitLevels[0]],
+      selectedApproverIds: selectedApproverIds,
+      selectedApproversByLevel: selectedApproversByLevel
+    });
   };
 
   openModal('input-modal');
@@ -4776,6 +4938,8 @@ var SEND_BACK_MAP_FE = {
   'UAT Phase':'Testing Phase','Deployment Phase':'UAT Phase',
   'Deployment Approval L1':'Deployment Phase','Deployment Approval L2':'Deployment Phase',
   'Deployment Approval L3':'Deployment Phase',
+  'DBA Deployment Phase':'Deployment Phase',
+  'Observation Phase':'Development Phase',
 };
 
 function openSendBackModal(release) {
@@ -4819,6 +4983,25 @@ async function doUnhold() {
     toast(r.releaseNumber+' resumed', false, 'green');
     await openDetail(activeDetailId); renderDashboard();
   });
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// CLOSE CR (Observation phase — CR Owner only)
+// ══════════════════════════════════════════════════════════════════════
+async function closeCR() {
+  var r = _currentRelease; if (!r) return;
+  showConfirmModal(
+    'Close CR',
+    '<p>Close <strong>'+r.releaseNumber+'</strong>? This will move the CR from Observation to Closed.</p>',
+    'Close CR', '#15803d',
+    async function() {
+      var result = await PATCH('/releases/'+activeDetailId+'/close-cr', {});
+      if (!result) return;
+      showInfoModal('CR Closed', 'CR moved to <strong>Closed</strong>.', false, 'green');
+      _tlRows = null;
+      await openDetail(activeDetailId); renderDashboard();
+    }
+  );
 }
 // ══════════════════════════════════════════════════════════════════════
 
@@ -5103,6 +5286,8 @@ async function openCompanyMapping(companyId, companyName) {
     { code:'TESTING',    label:'Testing Phase' },
     { code:'UAT',        label:'UAT Phase' },
     { code:'DEPLOYMENT', label:'Deployment Phase' },
+    { code:'DBA_DEPLOYMENT', label:'DBA Deployment Phase' },
+    { code:'OBSERVATION', label:'Observation Phase' },
   ];
 
   var body = document.getElementById('input-modal-body');
@@ -5418,8 +5603,8 @@ async function renderReviewerView(){
   var reviews=[];try{reviews=(await GET('/releases/reviews/my'))||[];}catch(e){}
   var badge=document.getElementById('reviewer-badge');if(badge){badge.textContent=reviews.length;badge.style.display=reviews.length?'':'none';}
   if(!reviews.length){wrap.innerHTML='<div class="table-wrap" style="padding:60px;text-align:center"><div style="font-size:36px;margin-bottom:12px">&#128065;</div><div style="font-size:15px;font-weight:700;color:var(--grey-700);margin-bottom:4px">No pending reviews</div></div>';return;}
-  var PC={'RD':'#C8102E','FSD':'#1565c0','DEV':'#1b5e20','TESTING':'#e65100','UAT':'#006064','DEPLOYMENT':'#1a237e'};
-  var PL={'RD':'RD Phase','FSD':'FSD Phase','DEV':'Development Phase','TESTING':'Testing Phase','UAT':'UAT Phase','DEPLOYMENT':'Deployment Phase'};
+  var PC={'RD':'#C8102E','FSD':'#1565c0','DEV':'#1b5e20','TESTING':'#e65100','UAT':'#006064','DEPLOYMENT':'#1a237e','DBA_DEPLOYMENT':'#1a237e'};
+  var PL={'RD':'RD Phase','FSD':'FSD Phase','DEV':'Development Phase','TESTING':'Testing Phase','UAT':'UAT Phase','DEPLOYMENT':'Deployment Phase','DBA_DEPLOYMENT':'DBA Deployment Phase'};
   var PCOL={'1':'#dc2626','2':'#d97706','3':'#2563eb','4':'#16a34a'};
   var PLBL={'1':'1-Critical','2':'2-High','3':'3-Moderate','4':'4-Low'};
   function fR(l,v){if(!v)return '';return '<div style="display:flex;gap:0;margin-bottom:0;border-bottom:1px solid var(--grey-100)"><div style="width:160px;flex-shrink:0;padding:7px 12px;background:var(--grey-50);font-size:11px;font-weight:700;color:var(--grey-500);text-transform:uppercase;border-right:1px solid var(--grey-200)">'+l+'</div><div style="flex:1;padding:7px 14px;font-size:13px;color:var(--grey-800)">'+v+'</div></div>';}
@@ -5515,7 +5700,13 @@ async function advanceState(force) {
     return;
   }
 
-  // Manual advance phases (Development → Testing → UAT → Deployment)
+  // DBA Deployment Phase — use doAdvance() which shows the same "Sub-Task Required" modal as FSD/Deployment
+  if (cur === 'DBA Deployment Phase') {
+    await doAdvance({});
+    return;
+  }
+
+  // Manual advance phases (Development → Testing → UAT)
   // Use _doAdvanceState which handles sub-task warnings
   await _doAdvanceState(null, false);
 }
@@ -5523,7 +5714,22 @@ async function doAdvance(body) {
   var fetchRes;try{fetchRes=await fetch(API_BASE+'/releases/'+activeDetailId+'/advance',{method:'PATCH',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(accessToken||'')},body:JSON.stringify(body)});}catch(ne){showInfoModal('Network Error','Cannot reach server: '+ne.message,true);return;}
   if(!fetchRes.ok){var ed={};try{ed=await fetchRes.json();}catch(e2){}var msg=ed.error||('Error '+fetchRes.status);if(msg.toLowerCase().includes('sub-task')||msg.toLowerCase().includes('subtask')){showInfoModal('Sub-Task Required',msg,true);}else{showInfoModal('Cannot Advance',msg,true);}return;}
   var result=await fetchRes.json().catch(function(){return null;});if(!result)return;
-  if(result.pendingWith){showInfoModal('Submitted for Approval','<strong>'+(result.flowType||'')+'</strong> submitted.<br>Pending with: <strong>'+result.pendingWith+'</strong>',false,'green');}
+  if(result.pendingWith){
+    var pipelineHtml = '';
+    if (result.approvalPipeline && result.approvalPipeline.length) {
+      pipelineHtml = '<br><br><strong>Selected approvers:</strong><br>'+
+        result.approvalPipeline.map(function(a) {
+          return 'L'+a.levelOrder+': <strong>'+a.approverName+'</strong>';
+        }).join('<br>');
+    }
+    showInfoModal(
+      'Submitted for Approval',
+      '<strong>'+(result.flowType||'')+'</strong> submitted.<br>Pending with: <strong>'+result.pendingWith+'</strong>'+
+      pipelineHtml,
+      false,
+      'green'
+    );
+  }
   else if(result.autoApproved){showInfoModal('Auto-Approved','Moved to: <strong>'+result.toState+'</strong>',false,'green');}
   else if(result.toState==='Cancelled'){showInfoModal('CR Cancelled','CR has been cancelled.',false);}
   else if(result.toState==='On Hold'){showInfoModal('CR On Hold','CR is now on hold.',false);}
@@ -5849,18 +6055,91 @@ async function removeOracleUserAdmin(userId, name) {
 }
 
 (async function init() {
-  // Oracle EBS SSO — if tokens in sessionStorage, skip login screen
-  var storedAccess=null,storedRefresh=null;
-  try{storedAccess=sessionStorage.getItem('crms_access');storedRefresh=sessionStorage.getItem('crms_refresh');}catch(e){}
-  if(storedAccess){
-    accessToken=storedAccess;refreshToken=storedRefresh;
-    try{var meRes=await fetch(API_BASE+'/auth/me',{headers:{'Authorization':'Bearer '+accessToken}});if(meRes.ok){var meData=await meRes.json();if(meData&&meData.userId){await afterLogin(meData);return;}}}catch(e){}
-    try{sessionStorage.removeItem('crms_access');sessionStorage.removeItem('crms_refresh');}catch(e){}
-    accessToken=refreshToken=null;
+  // Try restore session from refresh cookie
+  try {
+    var refreshRes = await fetch(API_BASE + '/auth/refresh', {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (refreshRes.ok) {
+      var refreshData = await refreshRes.json();
+      if (refreshData && refreshData.accessToken) {
+        accessToken = refreshData.accessToken;
+        var meRes = await fetch(API_BASE + '/auth/me', {
+          headers: { 'Authorization': 'Bearer ' + accessToken },
+          credentials: 'include',
+        });
+        if (meRes.ok) {
+          var meData = await meRes.json();
+          if (meData && meData.userId) {
+            await afterLogin(meData);
+            return;
+          }
+        }
+      }
+    }
+  } catch(e) {}
+  // Also try old sessionStorage for SSO compatibility
+  var storedAccess = null;
+  try { storedAccess = sessionStorage.getItem('crms_access'); } catch(e) {}
+  if (storedAccess) {
+    accessToken = storedAccess;
+    try {
+      var meRes2 = await fetch(API_BASE + '/auth/me', {
+        headers: { 'Authorization': 'Bearer ' + accessToken },
+        credentials: 'include',
+      });
+      if (meRes2.ok) {
+        var meData2 = await meRes2.json();
+        if (meData2 && meData2.userId) { await afterLogin(meData2); return; }
+      }
+    } catch(e) {}
+    sessionStorage.removeItem('crms_access');
+    accessToken = null;
+  }
+  await initLogin();
+})();
+
+// ══════════════════════════════════════════════════════════════════════
+// FRONTEND IDLE TIMER — 30 minute inactivity logout
+// ══════════════════════════════════════════════════════════════════════
+var _idleTimer = null;
+var IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+
+function resetIdleTimer() {
+  if (_idleTimer) clearTimeout(_idleTimer);
+  _idleTimer = setTimeout(onIdleTimeout, IDLE_TIMEOUT_MS);
+}
+
+function onIdleTimeout() {
+  if (!currentUser) return; // not logged in
+  if (window._notifPollTimer) { clearInterval(window._notifPollTimer); window._notifPollTimer = null; }
+
+  // Call logout endpoint with token (for audit logging)
+  var tokenToSend = accessToken;
+  accessToken = null; currentUser = null;
+  try { sessionStorage.removeItem('crms_access'); } catch(e) {}
+
+  if (tokenToSend) {
+    fetch(API_BASE + '/auth/logout', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Authorization': 'Bearer ' + tokenToSend },
+    }).catch(function() {});
   }
 
-  // populateLoginDropdown removed — user types username manually
-  await initLogin();         // session restore takes priority
+  showSessionExpiredMessage('Your session has expired due to inactivity. Please sign in again.');
+  doLogout(false);
+}
+
+// Monitor all activity events
+(function() {
+  var events = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'click'];
+  events.forEach(function(evt) {
+    document.addEventListener(evt, function() {
+      if (currentUser) resetIdleTimer();
+    }, { passive: true });
+  });
 })();
 
 
@@ -5961,6 +6240,118 @@ async function submitToFSD() {
 
 
 // ══════════════════════════════════════════════════════════════════════
+// ACTIVE SESSIONS — User session management
+// ══════════════════════════════════════════════════════════════════════
+
+async function renderSessionsView() {
+  var wrap = document.getElementById('sessions-table-wrap');
+  var stats = document.getElementById('sessions-stat-cards');
+  if (!wrap) return;
+
+  wrap.innerHTML = '<div style="padding:40px;text-align:center;color:var(--grey-400)"><div class="spinner" style="margin:0 auto 12px;width:28px;height:28px;border:3px solid var(--grey-200);border-top-color:var(--red);border-radius:50%;animation:spin .6s linear infinite"></div>Loading sessions...</div>';
+
+  try {
+    var data = await GET('/auth/sessions');
+    if (!data || !Array.isArray(data.sessions)) {
+      wrap.innerHTML = '<div style="padding:40px;text-align:center;color:var(--grey-400)">Failed to load sessions</div>';
+      return;
+    }
+
+    var sessions = data.sessions;
+    var now = Date.now();
+    var activeCount = sessions.filter(function(s) { return s.STATUS === 'ACTIVE'; }).length;
+
+    // Stats cards
+    if (stats) {
+      stats.innerHTML =
+        '<div style="background:var(--white);border:1px solid var(--grey-200);border-radius:10px;padding:16px 20px;min-width:140px">' +
+          '<div style="font-size:11px;color:var(--grey-500);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Total Sessions</div>' +
+          '<div style="font-size:28px;font-weight:700;color:var(--grey-800)">' + sessions.length + '</div>' +
+        '</div>' +
+        '<div style="background:var(--white);border:1px solid var(--grey-200);border-radius:10px;padding:16px 20px;min-width:140px">' +
+          '<div style="font-size:11px;color:var(--grey-500);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Active</div>' +
+          '<div style="font-size:28px;font-weight:700;color:#16a34a">' + activeCount + '</div>' +
+        '</div>';
+    }
+
+    if (sessions.length === 0) {
+      wrap.innerHTML = '<div style="padding:40px;text-align:center;color:var(--grey-400)"><div style="font-size:32px;margin-bottom:8px">&#128274;</div><p>No active sessions</p></div>';
+      return;
+    }
+
+    // Current session ID from JWT
+    var currentSessionId = null;
+    try {
+      var payload = JSON.parse(atob(accessToken.split('.')[1]));
+      currentSessionId = payload.sid;
+    } catch(e) {}
+
+    // Parse user agent to friendly name
+    function parseUA(ua) {
+      if (!ua) return 'Unknown Device';
+      var browser = 'Unknown Browser';
+      var os = 'Unknown OS';
+      if (ua.includes('Firefox/')) browser = 'Firefox';
+      else if (ua.includes('Edg/'))   browser = 'Edge';
+      else if (ua.includes('Chrome/')) browser = 'Chrome';
+      else if (ua.includes('Safari/')) browser = 'Safari';
+      if (ua.includes('Windows'))   os = 'Windows';
+      else if (ua.includes('Mac OS'))   os = 'macOS';
+      else if (ua.includes('Linux'))    os = 'Linux';
+      else if (ua.includes('Android'))  os = 'Android';
+      else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS';
+      return browser + ' on ' + os;
+    }
+
+    function formatTime(iso) {
+      if (!iso) return '—';
+      var d = new Date(iso);
+      var diff = now - d.getTime();
+      if (diff < 60000) return 'Just now';
+      if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+      if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+      return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    var rows = '';
+    for (var i = 0; i < sessions.length; i++) {
+      var s = sessions[i];
+      var isCurrent = s.SESSION_ID === currentSessionId;
+      var isActive = s.STATUS === 'ACTIVE';
+      var statusColor = isActive ? '#16a34a' : '#9ca3af';
+      var statusBg = isActive ? '#f0fdf4' : '#f9fafb';
+      var rowBg = isCurrent ? '#eff6ff' : '';
+      var label = isCurrent ? ' <span style="background:#3b82f6;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-left:6px">THIS DEVICE</span>' : '';
+
+      rows += '<tr style="background:' + rowBg + ';border-bottom:1px solid var(--grey-100)">' +
+        '<td style="padding:12px 16px">' +
+          '<div style="font-weight:600;font-size:13px">' + parseUA(s.USER_AGENT) + label + '</div>' +
+          '<div style="font-size:11px;color:var(--grey-400);margin-top:2px">' + (s.IP_ADDRESS || 'Unknown IP') + '</div>' +
+        '</td>' +
+        '<td style="padding:12px 16px"><span style="display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;color:' + statusColor + ';background:' + statusBg + '">' + s.STATUS + '</span></td>' +
+        '<td style="padding:12px 16px;font-size:12px;color:var(--grey-500)">' + formatTime(s.LAST_ACTIVITY) + '</td>' +
+        '<td style="padding:12px 16px;font-size:12px;color:var(--grey-500)">' + formatTime(s.CREATED_AT) + '</td>' +
+      '</tr>';
+    }
+
+    wrap.innerHTML =
+      '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">' +
+        '<thead><tr style="background:var(--grey-50);border-bottom:2px solid var(--grey-200)">' +
+          '<th style="padding:10px 16px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--grey-500)">Device</th>' +
+          '<th style="padding:10px 16px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--grey-500)">Status</th>' +
+          '<th style="padding:10px 16px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--grey-500)">Last Activity</th>' +
+          '<th style="padding:10px 16px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--grey-500)">Created</th>' +
+        '</tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+      '</table></div>';
+
+  } catch(e) {
+    wrap.innerHTML = '<div style="padding:40px;text-align:center;color:var(--grey-400)">Failed to load sessions: ' + (e.message || e) + '</div>';
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
 // MODULES — Admin UI
 // ══════════════════════════════════════════════════════════════════════
 let cachedModules = [];
@@ -6006,8 +6397,8 @@ function renderModuleCard(m) {
 
   // Phase groups — show per-phase assignment
   var phaseGroups = m.phaseGroups || {};
-  var phaseLabels = { DRAFT:'Draft', RD:'RD', FSD:'FSD', DEV:'Dev', TESTING:'Testing', UAT:'UAT', DEPLOYMENT:'Deployment' };
-  var phaseOrder  = ['DRAFT','RD','FSD','DEV','TESTING','UAT','DEPLOYMENT'];
+  var phaseLabels = { DRAFT:'Draft', RD:'RD', FSD:'FSD', DEV:'Dev', TESTING:'Testing', UAT:'UAT', DEPLOYMENT:'Deployment', DBA_DEPLOYMENT:'DBA Deployment', OBSERVATION:'Observation' };
+  var phaseOrder  = ['DRAFT','RD','FSD','DEV','TESTING','UAT','DEPLOYMENT','DBA_DEPLOYMENT','OBSERVATION'];
   var groupsHtml = phaseOrder.map(function(pc) {
     var pg = phaseGroups[pc];
     if (!pg) return '<span style="font-size:11px;color:var(--grey-400);margin-right:6px">'+phaseLabels[pc]+': <em>none</em></span>';
@@ -6015,7 +6406,7 @@ function renderModuleCard(m) {
   }).join('');
   var reviewersByPhase2   = m.reviewersByPhase || {};
   var processOwnerByPhase = m.processOwnerByPhase || {};
-  var PHASE_LABELS2 = { RD:'RD', FSD:'FSD', DEV:'Dev', TESTING:'Testing', UAT:'UAT', DEPLOYMENT:'Deployment' };
+  var PHASE_LABELS2 = { RD:'RD', FSD:'FSD', DEV:'Dev', TESTING:'Testing', UAT:'UAT', DEPLOYMENT:'Deployment', DBA_DEPLOYMENT:'DBA Deployment', OBSERVATION:'Observation' };
   var reviewersHtml = Object.keys(reviewersByPhase2).length
     ? Object.entries(reviewersByPhase2).map(function(e) {
         var ph = e[0], rvs = e[1];
@@ -6050,6 +6441,7 @@ function renderModuleCard(m) {
         '<button class="btn btn-outline btn-sm" data-action="phasegroups"   data-mid="' + mid + '">Phase Groups</button>',
         '<button class="btn btn-outline btn-sm" data-action="reviewers"    data-mid="' + mid + '">Reviewers</button>',
         '<button class="btn btn-outline btn-sm" data-action="processowners" data-mid="' + mid + '">Process Owners</button>',
+        '<button class="btn btn-outline btn-sm" data-action="users"         data-mid="' + mid + '">Business Users</button>',
         '<button class="btn btn-red btn-sm"     data-action="flow"         data-mid="' + mid + '">Approval Flows</button>',
       '</div>',
     '</div>',
@@ -6175,6 +6567,8 @@ async function editPhaseGroups(moduleId, moduleName, mod) {
     { code:'TESTING',    label:'Testing Phase' },
     { code:'UAT',        label:'UAT Phase' },
     { code:'DEPLOYMENT', label:'Deployment Phase' },
+    { code:'DBA_DEPLOYMENT', label:'DBA Deployment Phase' },
+    { code:'OBSERVATION', label:'Observation Phase' },
   ];
 
   // Build existing data: phaseGroupsAll from backend (multiple groups per phase)
@@ -6279,6 +6673,8 @@ async function editReviewers(moduleId, moduleName, mod) {
     {code:'RD', label:'RD Phase'}, {code:'FSD', label:'FSD Phase'},
     {code:'DEV', label:'Development Phase'}, {code:'TESTING', label:'Testing Phase'},
     {code:'UAT', label:'UAT Phase'}, {code:'DEPLOYMENT', label:'Deployment Phase'},
+    {code:'DBA_DEPLOYMENT', label:'DBA Deployment Phase'},
+    {code:'OBSERVATION', label:'Observation Phase'},
   ];
   var existing = (mod && mod.reviewersByPhase) || {};
 
@@ -6381,6 +6777,7 @@ async function editProcessOwners(moduleId, moduleName, mod) {
     {code:'TESTING', label:'Testing Phase (after Dev advance)'},
     {code:'UAT', label:'UAT Phase (after Testing advance)'},
     {code:'DEPLOYMENT', label:'Deployment Phase (after UAT advance)'},
+    {code:'DBA_DEPLOYMENT', label:'DBA Deployment Phase (after Deploy Approval)'},
   ];
   var existing = (mod && mod.processOwnerByPhase) || {};
 
@@ -6531,7 +6928,7 @@ async function editApprovalFlow(moduleId, moduleName) {
     '<div style="font-size:12px;font-weight:700;color:var(--grey-800);margin-bottom:6px">FSD Approval (FSD Phase → Development)</div>'+
     '<div id="fsd-flow-levels" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px"></div>'+
     '<button class="btn btn-outline btn-sm" id="add-fsd-btn" style="width:100%;margin-bottom:14px">+ Add FSD Level</button>'+
-    '<div style="font-size:12px;font-weight:700;color:var(--grey-800);margin-bottom:6px">Deployment Approval (Deployment → Closed)</div>'+
+    '<div style="font-size:12px;font-weight:700;color:var(--grey-800);margin-bottom:6px">Deployment Approval (Deployment → DBA Deployment Phase)</div>'+
     '<div id="dep-flow-levels" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px"></div>'+
     '<button class="btn btn-outline btn-sm" id="add-dep-btn" style="width:100%">+ Add Deployment Level</button>';
 
@@ -6704,6 +7101,8 @@ async function editApprovalFlow(moduleId, moduleName) {
 async function submitForApproval(phaseCode) {
   var release = _currentRelease;
   if (!release) return;
+  await openRdApprovalModal(release);
+  return;
   var approvers = release.phaseApprovers || [];
 
   // Build approver dropdown if any configured
@@ -6744,12 +7143,7 @@ async function submitForApproval(phaseCode) {
 }
 
 async function approveRelease() {
-  const comments = prompt('Comments (optional):') || '';
-  const result = await POST('/releases/' + activeDetailId + '/approve', { comments });
-  if (!result) return;
-  toast(result.message, false, 'green');
-  await openDetail(activeDetailId);
-  renderDashboard();
+  await promptApproveReject(activeDetailId, 'approve');
 }
 
 async function rejectRelease() {
@@ -6766,6 +7160,26 @@ async function rejectRelease() {
 // ══════════════════════════════════════════════════════════════════════
 // APPROVALS VIEW — dedicated menu for approvers
 // ══════════════════════════════════════════════════════════════════════
+(function setupApprovalsListActions() {
+  function bind() {
+    var container = document.getElementById('approvals-list');
+    if (!container || container._approvalClickBound) return;
+    container._approvalClickBound = true;
+    container.addEventListener('click', function(e) {
+      var btn = e.target.closest('[data-approval-action]');
+      if (!btn) return;
+      e.preventDefault();
+      var rid = btn.getAttribute('data-rid');
+      var rnum = btn.getAttribute('data-rnum') || '';
+      var action = btn.getAttribute('data-approval-action');
+      if (!rid || !action) return;
+      promptApproveReject(Number(rid), action, { fromList: true, releaseNumber: rnum });
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
+  else bind();
+})();
+
 async function renderApprovalsList() {
   var container = document.getElementById('approvals-list');
   if (!container) return;
@@ -6788,16 +7202,16 @@ async function renderApprovalsList() {
     html += '<tr style="background:'+bg+';border-bottom:1px solid var(--grey-200)">';
     html += '<td style="padding:10px 12px"><a class="cr-link" onclick="openDetail('+item.releaseId+')">'+item.releaseNumber+'</a></td>';
     html += '<td style="padding:10px 12px;font-size:13px">'+item.releaseTitle+'</td>';
-    html += '<td style="padding:10px 12px"><span style="font-size:11px;font-weight:700;padding:3px 8px;border-radius:10px;background:#e3f2fd;color:#1565c0">'+item.phaseCode+'</span></td>';
+    html += '<td style="padding:10px 12px"><span style="font-size:11px;font-weight:700;padding:3px 8px;border-radius:10px;background:#e3f2fd;color:#1565c0">'+item.phaseCode+' L'+item.levelOrder+'</span></td>';
     html += '<td style="padding:10px 12px;font-size:12px">'+prio+'</td>';
     html += '<td style="padding:10px 12px;font-size:12px">'+item.requestedBy+'</td>';
     html += '<td style="padding:10px 12px;font-size:12px">'+(item.plannedStartDate?new Date(item.plannedStartDate).toLocaleDateString():'—')+'</td>';
     html += '<td style="padding:10px 12px">';
     html += '<div style="display:flex;gap:6px">';
-    html += '<button class="btn btn-sm" style="background:var(--green);color:var(--white);border:none;padding:5px 12px;font-size:12px" '+
-            'data-rid="'+item.releaseId+'" data-rnum="'+item.releaseNumber+'" onclick="approveFromList(this.dataset.rid,this.dataset.rnum)">✓ Approve</button>';
-    html += '<button class="btn btn-sm" style="background:#fee2e2;color:var(--red);border:1px solid #fca5a5;padding:5px 12px;font-size:12px" '+
-            'data-rid="'+item.releaseId+'" data-rnum="'+item.releaseNumber+'" onclick="rejectFromList(this.dataset.rid,this.dataset.rnum)">✗ Reject</button>';
+    html += '<button type="button" class="btn btn-sm" style="background:var(--green);color:var(--white);border:none;padding:5px 12px;font-size:12px;cursor:pointer" '+
+            'data-rid="'+item.releaseId+'" data-rnum="'+item.releaseNumber+'" data-approval-action="approve">✓ Approve</button>';
+    html += '<button type="button" class="btn btn-sm" style="background:#fee2e2;color:var(--red);border:1px solid #fca5a5;padding:5px 12px;font-size:12px;cursor:pointer" '+
+            'data-rid="'+item.releaseId+'" data-rnum="'+item.releaseNumber+'" data-approval-action="reject">✗ Reject</button>';
     html += '</div>';
     html += '</td>';
     html += '</tr>';
@@ -6807,22 +7221,11 @@ async function renderApprovalsList() {
 }
 
 async function approveFromList(releaseId, releaseNumber) {
-  var comments = prompt('Approval comments (optional):') || '';
-  var res = await POST('/releases/'+releaseId+'/approve', { comments });
-  if (!res) return;
-  toast('✅ '+releaseNumber+' approved', false, 'green');
-  renderApprovalsList();
-  checkApproverStatus();
+  promptApproveReject(Number(releaseId), 'approve', { fromList: true, releaseNumber: releaseNumber || '' });
 }
 
 async function rejectFromList(releaseId, releaseNumber) {
-  var comments = prompt('Rejection reason (required):');
-  if (!comments || !comments.trim()) { toast('Please provide a rejection reason', true); return; }
-  var res = await POST('/releases/'+releaseId+'/reject', { comments });
-  if (!res) return;
-  toast('↩ '+releaseNumber+' rejected', false);
-  renderApprovalsList();
-  checkApproverStatus();
+  promptApproveReject(Number(releaseId), 'reject', { fromList: true, releaseNumber: releaseNumber || '' });
 }
 
 async function checkApproverStatus() {
@@ -6847,10 +7250,11 @@ async function checkApproverStatus() {
 // Phase label mapping for display
 var PHASE_CODE_FROM_STATE = {
   'RD Phase':'RD', 'FSD Phase':'FSD', 'Development Phase':'DEV',
-  'Testing Phase':'TESTING', 'UAT Phase':'UAT', 'Deployment Phase':'DEPLOYMENT'
+  'Testing Phase':'TESTING', 'UAT Phase':'UAT', 'Deployment Phase':'DEPLOYMENT',
+  'DBA Deployment Phase':'DBA_DEPLOYMENT'
 };
 var APPROVAL_PHASE_STATES = ['RD Phase','FSD Phase','Deployment Phase'];
-var ALL_ACTIVE_PHASES = ['RD Phase','FSD Phase','Development Phase','Testing Phase','UAT Phase','Deployment Phase'];
+var ALL_ACTIVE_PHASES = ['RD Phase','FSD Phase','Development Phase','Testing Phase','UAT Phase','Deployment Phase','DBA Deployment Phase'];
 
 function renderApprovalActions(release) {
   var container = document.getElementById('dm-approval-actions');
@@ -6873,11 +7277,26 @@ function renderApprovalActions(release) {
       '<div style="font-size:12px;color:#7f1d1d">No further actions possible. All sub-tasks are now void.</div></div></div>';
     return;
   }
+  if (state === 'Observation Phase') {
+    var isCrOwnerObs = currentUser && release.crOwnerUserId &&
+      String(release.crOwnerUserId) === String(currentUser.userId);
+    container.innerHTML =
+      '<div style="padding:10px 14px;background:#e0f2f1;border:1px solid #80cbc4;border-radius:6px;display:flex;align-items:center;gap:8px">'+
+      '<span style="font-size:16px">👁</span>'+
+      '<div><div style="font-size:12px;font-weight:700;color:#00695c">Observation Phase</div>'+
+      '<div style="font-size:12px;color:#004d40">'+
+      (isCrOwnerObs
+        ? 'No approval required. Use Close CR when ready, or Send Back to Development if needed.'
+        : 'This CR is under observation by the CR Owner. No approval actions are required.')+
+      '</div></div></div>';
+    return;
+  }
   if (state === 'Closed') {
     container.innerHTML =
-      '<div style="padding:10px 14px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;display:flex;align-items:center;gap:8px">'+
+      '<div style="padding:10px 14px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+
       '<span style="font-size:16px">✅</span>'+
-      '<div style="font-size:12px;font-weight:700;color:#14532d">This CR has been Closed successfully.</div></div>';
+      '<div style="flex:1"><div style="font-size:12px;font-weight:700;color:#14532d">This CR has been Closed successfully.</div></div>'+
+      '</div>';
     return;
   }
 
@@ -6993,7 +7412,7 @@ function buildApprovalBanner(container, state, trail, release) {
   var phaseCode = '';
   if (state.includes('Draft Awaiting'))       phaseCode = 'DRAFT';
   else if (state.includes('RD Awaiting'))     phaseCode = 'RD';
-  else if (state.includes('FSD Awaiting'))    phaseCode = 'FSD';
+  else if (state.includes('FSD Awaiting') || state.includes('FSD Approval')) phaseCode = 'FSD';
   else if (state.includes('Deployment'))      phaseCode = 'DEPLOYMENT';
 
   // Filter trail for this phase (case-insensitive phase match)
@@ -7010,7 +7429,6 @@ function buildApprovalBanner(container, state, trail, release) {
   }
 
   var myUid   = currentUser && String(currentUser.userId);
-  var isAdmin = currentUser && currentUser.role === 'admin';
   var myApproval = relevant.find(function(a) {
     var sameLevel = Number(a.levelOrder) === Number(curLevel);
     var byId   = myUid && String(a.approverUserId || '') === myUid;
@@ -7019,6 +7437,13 @@ function buildApprovalBanner(container, state, trail, release) {
   });
   var isPendingMine = !!(release && release.canApprove) ||
     (myApproval && String(myApproval.status || '').toLowerCase() === 'pending');
+  var isAwaitingState = state.includes('Awaiting') || state.includes('Approval L');
+  // Show the selected approval pipeline for this phase (one row per level chosen at submit).
+  var visibleTrail = isAwaitingState
+    ? relevant.slice().sort(function(a, b) {
+        return Number(a.levelOrder) - Number(b.levelOrder);
+      })
+    : relevant;
 
   // Banner wrapper
   var wrap = document.createElement('div');
@@ -7033,19 +7458,24 @@ function buildApprovalBanner(container, state, trail, release) {
   // Approval trail
   var body = document.createElement('div');
   body.style.cssText = 'padding:10px 14px;background:#fffbeb';
-  var trailHtml = relevant.map(function(a) {
-    var icon = a.status === 'Approved' ? '✅' : a.status === 'Rejected' ? '❌' : '⏳';
-    var isCur = Number(a.levelOrder) === Number(curLevel);
+  var trailHtml = visibleTrail.map(function(a) {
+    var st = String(a.status || '').toLowerCase();
+    var icon = st === 'approved' ? '✅' : st === 'rejected' ? '❌' : st === 'skipped' ? '⏭' : '⏳';
+    var isCur = Number(a.levelOrder) === Number(curLevel) && st === 'pending';
+    var isUpcoming = Number(a.levelOrder) > Number(curLevel) && st === 'pending';
     return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;'+
-           (isCur?'font-weight:700;color:#92400e':'color:#64748b')+'">'+
+           (isCur ? 'font-weight:700;color:#92400e' : isUpcoming ? 'color:#92400e' : 'color:#64748b')+'">'+
            '<span>'+icon+'</span>'+
            '<span style="font-size:12px">L'+a.levelOrder+': '+a.approverName+'</span>'+
-           (a.status!=='Pending'?'<span style="font-size:11px;color:var(--grey-400)">'+a.status+(a.comments?' — '+a.comments:'')+'</span>':'')+'</div>';
+           (st !== 'pending'
+             ? '<span style="font-size:11px;color:var(--grey-400)">'+a.status+(a.comments?' — '+a.comments:'')+'</span>'
+             : (isUpcoming ? '<span style="font-size:11px;color:#b45309">Upcoming</span>' : ''))+
+           '</div>';
   }).join('');
   body.innerHTML = trailHtml || '<div style="font-size:12px;color:var(--grey-400)">Waiting for approver response</div>';
 
-  // Approve / Reject buttons for current approver
-  if (isPendingMine || isAdmin) {
+  var canShowApprovalActions = isPendingMine;
+  if (canShowApprovalActions) {
     var actions = document.createElement('div');
     actions.style.cssText = 'padding:10px 14px;background:#fffbeb;border-top:1px solid #fde68a;display:flex;gap:8px';
     var approveBtn = document.createElement('button');
@@ -7067,29 +7497,79 @@ function buildApprovalBanner(container, state, trail, release) {
   container.appendChild(wrap);
 }
 
-async function promptApproveReject(releaseId, action) {
+async function promptApproveReject(releaseId, action, opts) {
+  opts = opts || {};
   var isApprove = action === 'approve';
+  var nextLevelHtml = '';
+  var needsNextLevel = false;
+  var nextLevelNum = 0;
+
+  if (isApprove) {
+    var release = await GET('/releases/' + releaseId);
+    var phaseCode = '';
+    if (release && release.state) {
+      if (release.state.indexOf('RD') >= 0 && release.state.indexOf('FSD') < 0) phaseCode = 'RD';
+      else if (release.state.indexOf('FSD') >= 0) phaseCode = 'FSD';
+      else if (release.state.indexOf('Deployment') >= 0) phaseCode = 'DEPLOYMENT';
+    }
+    var curLevel = release ? Number(release.currentApprovalLevel) : 1;
+    nextLevelNum = curLevel + 1;
+
+    if (phaseCode) {
+      var flowOpts = await GET('/releases/' + releaseId + '/approval-flow-options?phase=' + phaseCode);
+      var levels = (flowOpts && flowOpts.levels) || [];
+      var nextLevelUsers = levels.filter(function(u) { return Number(u.levelOrder) === nextLevelNum; });
+      var trail = (release && release.approvalTrail) || [];
+      var nextAssigned = trail.some(function(a) {
+        return a.phaseCode === phaseCode && Number(a.levelOrder) === nextLevelNum;
+      });
+
+      if (nextLevelUsers.length && !nextAssigned) {
+        needsNextLevel = true;
+        nextLevelHtml = buildApproverPickerHtml('next-level-approver', nextLevelNum, nextLevelUsers, {
+          fieldStyle: 'margin-top:12px',
+          hint: 'Select who should approve at Level '+nextLevelNum+' (your manager\'s manager)',
+        });
+      }
+    }
+  }
+
   document.getElementById('input-modal-title').textContent = isApprove ? 'Approve Release' : 'Reject Release';
   document.getElementById('input-modal-body').innerHTML =
     '<div class="form-field">' +
     '<label>'+(isApprove ? 'Comments (optional)' : 'Rejection Reason *')+'</label>' +
     '<textarea id="approval-comment" style="width:100%;padding:8px;border:1.5px solid var(--grey-200);border-radius:4px;font-family:var(--font);font-size:13px;min-height:80px" placeholder="'+(isApprove?'Optional comments…':'Required — explain why this is rejected…')+'"></textarea>' +
-    '</div>';
+    '</div>' + nextLevelHtml;
   document.getElementById('input-modal-save').textContent = isApprove ? 'Confirm Approve' : 'Confirm Reject';
   document.getElementById('input-modal-save').className = isApprove ? 'btn btn-green' : 'btn';
   if (!isApprove) {
     document.getElementById('input-modal-save').style.cssText = 'background:#dc2626;color:#fff;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;font-weight:600';
+  } else {
+    document.getElementById('input-modal-save').style.cssText = '';
   }
   document.getElementById('input-modal-save').onclick = async function() {
     var comment = document.getElementById('approval-comment').value.trim();
     if (!isApprove && !comment) { toast('Rejection reason is required', true); return; }
+    var body = { comments: comment };
+    if (needsNextLevel) {
+      var nextSel = document.getElementById('next-level-approver');
+      var nextId = nextSel ? nextSel.value : '';
+      if (!nextId) { toast('Please select a Level '+nextLevelNum+' approver', true); return; }
+      body.selectedApproverId = parseInt(nextId, 10);
+    }
     var endpoint = '/releases/' + releaseId + '/' + action;
-    var result = await POST(endpoint, { comments: comment });
+    var result = await POST(endpoint, body);
     if (!result) return;
-    toast(result.message || (isApprove ? 'Approved!' : 'Rejected'), false, isApprove ? 'green' : '');
+    var rnum = opts.releaseNumber || '';
+    toast(result.message || (isApprove ? (rnum ? '✅ '+rnum+' approved' : 'Approved!') : (rnum ? '↩ '+rnum+' rejected' : 'Rejected')), false, isApprove ? 'green' : '');
     closeModal('input-modal');
-    await openDetail(releaseId);
-    renderDashboard();
+    if (opts.fromList) {
+      renderApprovalsList();
+      checkApproverStatus();
+    } else {
+      await openDetail(releaseId);
+      renderDashboard();
+    }
   };
   openModal('input-modal');
 }
@@ -7104,14 +7584,16 @@ var _activeTaskId    = null;   // task currently open in detail panel
 // ── renderSubTasks — called when detail modal opens ──────────────────
 async function renderSubTasks(release) {
   _currentRelease = release;
-  renderSubTasksFromData(release.phaseTasks || [], release);
+  var tasks = (release.phaseTasks || []);
+  renderSubTasksFromData(tasks, release);
 }
 
 async function renderSubTasksById(releaseId) {
   var r = await GET('/releases/' + releaseId);
   if (!r) return;
   _currentRelease = r;
-  renderSubTasksFromData(r.phaseTasks || [], r);
+  var tasks = (r.phaseTasks || []);
+  renderSubTasksFromData(tasks, r);
 }
 
 // ── Main sub-tasks view: table + Add button ──────────────────────────
@@ -7140,7 +7622,7 @@ function renderSubTasksFromData(tasks, release) {
     var ph2    = stateToPhaseCodeFE(release.state);
     var isRDph = (ph2 === 'RD');
     if (!isRDph) {
-      var phMap2  = {FSD:'FSD Phase',DEV:'Development Phase',TESTING:'Testing Phase',UAT:'UAT Phase',DEPLOYMENT:'Deployment Phase'};
+      var phMap2  = {FSD:'FSD Phase',DEV:'Development Phase',TESTING:'Testing Phase',UAT:'UAT Phase',DEPLOYMENT:'Deployment Phase',DBA_DEPLOYMENT:'DBA Deployment Phase'};
       var phName2 = phMap2[ph2] || release.state || 'current phase';
       html += '<div style="background:#fff7ed;border:1.5px solid #fed7aa;border-radius:var(--radius);padding:14px 18px;font-size:13px">' +
               '<div style="font-weight:700;color:#92400e;margin-bottom:6px">\u26a0 Sub-Task Required</div>' +
@@ -7504,7 +7986,8 @@ function openAddSubTask() {
 
   var phaseLabelsMap = {
     RD:'RD Task', FSD:'FSD Task', DEV:'Development Task',
-    TESTING:'Testing Task', UAT:'UAT Task', DEPLOYMENT:'Deployment Task'
+    TESTING:'Testing Task', UAT:'UAT Task', DEPLOYMENT:'Deployment Task',
+    DBA_DEPLOYMENT:'DBA Deployment Task', OBSERVATION:'Observation Task'
   };
 
   // Auto-detect phase from current release state
@@ -7513,12 +7996,14 @@ function openAddSubTask() {
   // If state is an approval state, determine which phase we are about to complete
   if (!curPhase) {
     var s = release.state || '';
-    if      (s.includes('RD'))          curPhase = 'RD';
-    else if (s.includes('FSD'))         curPhase = 'FSD';
+    if      (s.includes('DBA'))         curPhase = 'DBA_DEPLOYMENT';
+    else if (s.includes('Observation')) curPhase = 'OBSERVATION';
     else if (s.includes('Deployment'))  curPhase = 'DEPLOYMENT';
     else if (s.includes('Development')) curPhase = 'DEV';
     else if (s.includes('Testing'))     curPhase = 'TESTING';
     else if (s.includes('UAT'))         curPhase = 'UAT';
+    else if (s.includes('FSD'))         curPhase = 'FSD';
+    else if (s.includes('RD'))          curPhase = 'RD';
   }
 
   if (!curPhase) {
@@ -7919,26 +8404,11 @@ async function downloadPhaseTemplate(moduleId, phaseCode) {
   toast('\u2193 RD template downloaded. Fill it and upload back to close your task.', false, 'green');
 }
 
-function stateToPhaseCodeFE(state) {
-  var m = {
-    'Draft':'DRAFT','RD Phase':'RD','FSD Phase':'FSD',
-    'Development Phase':'DEV','Testing Phase':'TESTING',
-    'UAT Phase':'UAT','Deployment Phase':'DEPLOYMENT',
-  };
-  return m[state] || null;
-}
-
-function sortSubTasks(col) {
-  var tbody = document.getElementById('subtasks-tbody');
-  if (!tbody) return;
-  var rows = Array.from(tbody.querySelectorAll('tr'));
-  rows.sort(function(a, b) { return a.cells[col].textContent.localeCompare(b.cells[col].textContent); });
-  rows.forEach(function(r) { tbody.appendChild(r); });
-}
-
 
 // ═══════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════
 // MY PHASE TASKS — dashboard widget showing open RTSK tasks for user
+
 // ═══════════════════════════════════════════════════════════════════════
 async function renderMyPhaseTasks() {
   var tbody = document.getElementById('my-phase-tasks-tbody');
@@ -7972,8 +8442,43 @@ function stateToPhaseCodeFE(state) {
     'Draft':'DRAFT','RD Phase':'RD','FSD Phase':'FSD',
     'Development Phase':'DEV','Testing Phase':'TESTING',
     'UAT Phase':'UAT','Deployment Phase':'DEPLOYMENT',
+    'DBA Deployment Phase':'DBA_DEPLOYMENT',
+    'Observation Phase':'OBSERVATION',
   };
   return m[state] || null;
+}
+
+function getPhaseGroupForRelease(r) {
+  if (!r || !r.moduleId) { console.log('[PG] No moduleId', r); return ''; }
+  var curPhase = stateToPhaseCodeFE(r.state);
+  if (!curPhase) {
+    var s = r.state || '';
+    if      (s.includes('DBA'))         curPhase = 'DBA_DEPLOYMENT';
+    else if (s.includes('Observation')) curPhase = 'OBSERVATION';
+    else if (s.includes('Deployment'))  curPhase = 'DEPLOYMENT';
+    else if (s.includes('Development')) curPhase = 'DEV';
+    else if (s.includes('Testing'))     curPhase = 'TESTING';
+    else if (s.includes('UAT'))         curPhase = 'UAT';
+    else if (s.includes('FSD'))         curPhase = 'FSD';
+    else if (s.includes('RD'))          curPhase = 'RD';
+  }
+  console.log('[PG] r.moduleId='+r.moduleId+' r.state="'+r.state+'" resolvedPhase="'+curPhase+'" REF.modules.length='+(REF.modules||[]).length);
+  if (!curPhase) { console.log('[PG] Cannot resolve phase'); return ''; }
+  var mod = (REF.modules || []).find(function(m) { return Number(m.moduleId) === Number(r.moduleId); });
+  if (!mod) { console.log('[PG] Module not found for moduleId='+r.moduleId); return ''; }
+  console.log('[PG] Module found: "'+mod.moduleName+'" phaseGroupsAll keys='+Object.keys(mod.phaseGroupsAll||{}).join(','));
+  if (mod.phaseGroupsAll && mod.phaseGroupsAll[curPhase] && mod.phaseGroupsAll[curPhase].length) {
+    var grpName = mod.phaseGroupsAll[curPhase][0].groupName;
+    console.log('[PG] Found from phaseGroupsAll: "'+grpName+'"');
+    return grpName;
+  }
+  if (mod.phaseGroups && mod.phaseGroups[curPhase]) {
+    var grpName2 = mod.phaseGroups[curPhase].groupName;
+    console.log('[PG] Found from phaseGroups: "'+grpName2+'"');
+    return grpName2;
+  }
+  console.log('[PG] No group found for phase "'+curPhase+'" in module');
+  return '';
 }
 
 function sortSubTasks(col) {
