@@ -164,6 +164,10 @@ async function login(req, res, next) {
     const passwordMatch = await bcrypt.compare(password, crmsUser.PASSWORD_HASH);
     if (!passwordMatch) return res.status(401).json({ error: 'Invalid credentials.' });
 
+    await db.executeWithCommit(
+      "UPDATE crms_users SET instance='PRIMARY' WHERE UPPER(initials)='" + safe(username) + "'", {}
+    );
+
     return await issueTokens(res, crmsUser, false, req);
 
   } catch (err) { next(err); }
@@ -207,52 +211,27 @@ async function syncSecondaryUser(secUser) {
 
   let primaryUser = await db.queryOne(
     "SELECT user_id, initials, full_name, role, password_hash, is_active " +
-    "FROM crms_users WHERE UPPER(initials)='" + safe(initials) + "' AND instance='SECONDARY' AND ROWNUM=1", {}
+    "FROM crms_users WHERE UPPER(initials)='" + safe(initials) + "' AND ROWNUM=1", {}
   );
 
-  const rawRole = (secUser.ROLE || 'user').toLowerCase();
-  const role = (rawRole === 'admin') ? 'admin' : 'user';
-
   if (primaryUser) {
-    const lastLog = (secUser.LAST_LOGIN instanceof Date) ? secUser.LAST_LOGIN : new Date();
     await db.executeWithCommit(
-      "UPDATE crms_users SET " +
-      "full_name='" + safe(secUser.FULL_NAME || '') + "', " +
-      "role='" + safe(role) + "', " +
-      "password_hash='" + safe(secUser.PASSWORD_HASH || '') + "', " +
-      "is_active=" + (secUser.IS_ACTIVE == null || secUser.IS_ACTIVE === 1 ? 1 : 0) + ", " +
-      "email_address='" + safe(secUser.EMAIL_ADDRESS || '') + "', " +
-      "last_login=:lastLogin, instance='SECONDARY' " +
-      "WHERE UPPER(initials)='" + safe(initials) + "' AND instance='SECONDARY'",
-      { lastLogin: lastLog }
+      "UPDATE crms_users SET instance='SECONDARY' WHERE UPPER(initials)='" + safe(initials) + "'", {}
     );
-    primaryUser = await db.queryOne(
-      "SELECT user_id, initials, full_name, role, password_hash, is_active " +
-      "FROM crms_users WHERE UPPER(initials)='" + safe(initials) + "' AND instance='SECONDARY' AND ROWNUM=1", {}
-    );
-    if (primaryUser) primaryUser._isNew = false;
+    primaryUser._isNew = false;
     return primaryUser;
   }
 
-  const displayName = secUser.FULL_NAME || makeDisplayName({ USER_NAME: initials });
-  let init = initials || makeInitials(initials || displayName);
-  let suffix = 0;
-  while (true) {
-    const clash = await db.queryOne(
-      "SELECT user_id FROM crms_users WHERE UPPER(initials)='" + init + "' AND instance='SECONDARY' AND ROWNUM=1", {}
-    );
-    if (!clash) break;
-    suffix++;
-    init = (initials || 'XX').slice(0, 2) + suffix;
-  }
-
+  const rawRole = (secUser.ROLE || 'user').toLowerCase();
+  const role = (rawRole === 'admin') ? 'admin' : 'user';
+  const displayName = secUser.FULL_NAME || initials;
   const lastLog = (secUser.LAST_LOGIN instanceof Date) ? secUser.LAST_LOGIN : new Date();
   const created = (secUser.CREATED_AT instanceof Date) ? secUser.CREATED_AT : new Date();
 
   await db.executeWithCommit(
     "INSERT INTO crms_users(initials, full_name, role, password_hash, is_active, " +
     "email_address, instance, last_login, created_at) " +
-    "VALUES('" + safe(init) + "', '" + safe(displayName) + "', '" + safe(role) + "', " +
+    "VALUES('" + safe(initials) + "', '" + safe(displayName) + "', '" + safe(role) + "', " +
     "'" + safe(secUser.PASSWORD_HASH || '') + "', " +
     (secUser.IS_ACTIVE == null || secUser.IS_ACTIVE === 1 ? 1 : 0) + ", " +
     "'" + safe(secUser.EMAIL_ADDRESS || '') + "', 'SECONDARY', :lastLogin, :createdAt)",
@@ -261,7 +240,7 @@ async function syncSecondaryUser(secUser) {
 
   primaryUser = await db.queryOne(
     "SELECT user_id, initials, full_name, role, password_hash, is_active " +
-    "FROM crms_users WHERE UPPER(initials)='" + safe(init) + "' AND instance='SECONDARY' AND ROWNUM=1", {}
+    "FROM crms_users WHERE UPPER(initials)='" + safe(initials) + "' AND ROWNUM=1", {}
   );
 
   if (primaryUser) {
@@ -270,8 +249,8 @@ async function syncSecondaryUser(secUser) {
       "'User Synced from Secondary DB', " + num(primaryUser.USER_ID) + ", '--', " +
       "'Secondary DB user " + safe(initials) + " synced as " + safe(displayName) + "')", {}
     );
+    primaryUser._isNew = true;
   }
-  if (primaryUser) primaryUser._isNew = true;
   return primaryUser;
 }
 
