@@ -59,7 +59,7 @@ END;
 -- 2. TABLES (CREATED IN LOGICAL DEPENDENCY ORDER)
 -- ============================================================
 
--- TABLE: crms_users
+-- TABLE: 1. crms_users
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -85,7 +85,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_assignment_groups
+-- TABLE: 2. crms_assignment_groups
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -104,7 +104,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_companies
+-- TABLE: 3. crms_companies
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -122,7 +122,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_services
+-- TABLE: 4. crms_services
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -140,7 +140,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_modules
+-- TABLE: 5. crms_modules
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -160,7 +160,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_group_members
+-- TABLE: 6. crms_group_members
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -178,7 +178,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_phase_groups
+-- TABLE: 7. crms_phase_groups
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -198,7 +198,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_phase_templates
+-- TABLE: 8. crms_phase_templates
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -222,7 +222,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_approval_flows
+-- TABLE: 9. crms_approval_flows
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -245,7 +245,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_phase_reviewers
+-- TABLE: 10. crms_phase_reviewers
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -265,7 +265,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_phase_process_owners
+-- TABLE: 11. crms_phase_process_owners
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -286,7 +286,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_releases
+-- TABLE: 12. crms_releases
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -355,7 +355,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_release_history
+-- TABLE: 13. crms_release_history
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -377,7 +377,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_tasks (Legacy Phase Tasks)
+-- TABLE: 14. crms_tasks (Legacy Phase Tasks)
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -406,7 +406,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_comments
+-- TABLE: 15. crms_comments
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -426,7 +426,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_notifications
+-- TABLE: 16. crms_notifications
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -449,7 +449,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_audit
+-- TABLE: 17. crms_audit
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -473,7 +473,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_attachments
+-- TABLE: 18. crms_attachments
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -499,7 +499,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_release_approvals
+-- TABLE: 19. crms_release_approvals
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -513,7 +513,7 @@ BEGIN
         phase_code       VARCHAR2(20)   NOT NULL,
         level_order      NUMBER(2)      NOT NULL,
         approver_user_id NUMBER         NOT NULL CONSTRAINT fk_ra_approver REFERENCES crms_users(user_id),
-        status           VARCHAR2(10)   DEFAULT ''Pending'' NOT NULL CONSTRAINT chk_ra_status CHECK (status IN (''Pending'',''Approved'',''Rejected'')),
+        status           VARCHAR2(10)   DEFAULT ''Pending'' NOT NULL CONSTRAINT chk_ra_status CHECK (status IN (''Pending'',''Approved'',''Rejected'',''Skipped'')),
         comments         VARCHAR2(2000),
         actioned_at      TIMESTAMP,
         created_at       TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL
@@ -525,7 +525,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_release_tasks (RTSK Sub-Tasks per Phase)
+-- TABLE: 20. crms_release_tasks (RTSK Sub-Tasks per Phase)
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -558,7 +558,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_release_phase_groups (CR-Level Overrides)
+-- TABLE: 21. crms_release_phase_groups (CR-Level Overrides)
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -578,7 +578,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_review_requests
+-- TABLE: 22. crms_review_requests
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -604,7 +604,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_task_list
+-- TABLE: 23. crms_task_list
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -624,7 +624,7 @@ BEGIN
         process          VARCHAR2(200),
         task_title       VARCHAR2(1000),
         owner            VARCHAR2(200),
-        status           VARCHAR2(50)  DEFAULT ''NOT STARTED'' CONSTRAINT chk_tl_status CHECK (status IN (''OPEN'','''HOLD'',''DROP'',''COMPLETE'',''NOT STARTED'')),
+        status           VARCHAR2(50)  DEFAULT ''NOT STARTED'' CONSTRAINT chk_tl_status CHECK (status IN (''OPEN'',''HOLD'',''DROP'',''COMPLETE'',''NOT STARTED'')),
         stage            VARCHAR2(100),
         pending_with     VARCHAR2(200),
         cr_task_id       VARCHAR2(200),
@@ -662,7 +662,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_task_list_editors
+-- TABLE: 24. crms_task_list_editors
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -681,7 +681,7 @@ BEGIN
 END;
 /
 
--- TABLE: user_sessions
+-- TABLE: 25. user_sessions
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -713,7 +713,7 @@ BEGIN
 END;
 /
 
--- TABLE: crms_sso_tokens
+-- TABLE: 26. crms_sso_tokens
 DECLARE
   v_exists NUMBER;
 BEGIN
@@ -734,6 +734,141 @@ BEGIN
     EXECUTE IMMEDIATE 'CREATE INDEX idx_sso_expires ON crms_sso_tokens(expires_at)';
     DBMS_OUTPUT.PUT_LINE('  CREATED : crms_sso_tokens');
   ELSE DBMS_OUTPUT.PUT_LINE('  EXISTS  : crms_sso_tokens'); END IF;
+END;
+/
+
+-- TABLE: 27. crms_module_users
+DECLARE
+  v_exists NUMBER;
+BEGIN
+  SELECT COUNT(*) INTO v_exists FROM user_tables WHERE table_name = 'CRMS_MODULE_USERS';
+  IF v_exists = 0 THEN
+    EXECUTE IMMEDIATE '
+      CREATE TABLE crms_module_users (
+        module_user_id  NUMBER         GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        module_id       NUMBER         NOT NULL CONSTRAINT fk_mu_module REFERENCES crms_modules(module_id) ON DELETE CASCADE,
+        user_id         NUMBER         NOT NULL CONSTRAINT fk_mu_user REFERENCES crms_users(user_id) ON DELETE CASCADE,
+        is_requester    NUMBER(1)      DEFAULT 1 NOT NULL CONSTRAINT chk_mu_req CHECK (is_requester IN (0,1)),
+        is_approver     NUMBER(1)      DEFAULT 0 NOT NULL CONSTRAINT chk_mu_app CHECK (is_approver IN (0,1)),
+        created_at      TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL,
+        CONSTRAINT uq_module_user UNIQUE (module_id, user_id)
+      )';
+    EXECUTE IMMEDIATE 'CREATE INDEX idx_mu_user   ON crms_module_users(user_id)';
+    EXECUTE IMMEDIATE 'CREATE INDEX idx_mu_module ON crms_module_users(module_id)';
+    DBMS_OUTPUT.PUT_LINE('  CREATED : crms_module_users');
+  ELSE DBMS_OUTPUT.PUT_LINE('  EXISTS  : crms_module_users'); END IF;
+END;
+/
+
+-- TABLE: 28. crms_approval_flow_approvers
+DECLARE
+  v_exists NUMBER;
+BEGIN
+  SELECT COUNT(*) INTO v_exists FROM user_tables WHERE table_name = 'CRMS_APPROVAL_FLOW_APPROVERS';
+  IF v_exists = 0 THEN
+    EXECUTE IMMEDIATE '
+      CREATE TABLE crms_approval_flow_approvers (
+        id               NUMBER         GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        flow_id          NUMBER         NOT NULL CONSTRAINT fk_afa_flow REFERENCES crms_approval_flows(flow_id) ON DELETE CASCADE,
+        approver_user_id NUMBER         NOT NULL CONSTRAINT fk_afa_user REFERENCES crms_users(user_id),
+        CONSTRAINT uq_afa_flow_user UNIQUE (flow_id, approver_user_id)
+      )';
+    EXECUTE IMMEDIATE 'CREATE INDEX idx_afa_flow ON crms_approval_flow_approvers(flow_id)';
+    EXECUTE IMMEDIATE 'CREATE INDEX idx_afa_user ON crms_approval_flow_approvers(approver_user_id)';
+    DBMS_OUTPUT.PUT_LINE('  CREATED : crms_approval_flow_approvers');
+  ELSE DBMS_OUTPUT.PUT_LINE('  EXISTS  : crms_approval_flow_approvers'); END IF;
+END;
+/
+
+-- TABLE: 29. crms_company_service_map
+DECLARE
+  v_exists NUMBER;
+BEGIN
+  SELECT COUNT(*) INTO v_exists FROM user_tables WHERE table_name = 'CRMS_COMPANY_SERVICE_MAP';
+  IF v_exists = 0 THEN
+    EXECUTE IMMEDIATE '
+      CREATE TABLE crms_company_service_map (
+        map_id        NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        company_id    NUMBER NOT NULL CONSTRAINT fk_csm_company REFERENCES crms_companies(company_id) ON DELETE CASCADE,
+        service_id    NUMBER NOT NULL CONSTRAINT fk_csm_service REFERENCES crms_services(service_id) ON DELETE CASCADE,
+        created_at    TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+        CONSTRAINT uq_company_service UNIQUE (company_id, service_id)
+      )';
+    DBMS_OUTPUT.PUT_LINE('  CREATED : crms_company_service_map');
+  ELSE DBMS_OUTPUT.PUT_LINE('  EXISTS  : crms_company_service_map'); END IF;
+END;
+/
+
+-- TABLE: 30. crms_company_group_phase_map
+DECLARE
+  v_exists NUMBER;
+BEGIN
+  SELECT COUNT(*) INTO v_exists FROM user_tables WHERE table_name = 'CRMS_COMPANY_GROUP_PHASE_MAP';
+  IF v_exists = 0 THEN
+    EXECUTE IMMEDIATE '
+      CREATE TABLE crms_company_group_phase_map (
+        phase_map_id  NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        company_id    NUMBER NOT NULL CONSTRAINT fk_cgpm_company REFERENCES crms_companies(company_id) ON DELETE CASCADE,
+        service_id    NUMBER NOT NULL CONSTRAINT fk_cgpm_service REFERENCES crms_services(service_id) ON DELETE CASCADE,
+        group_id      NUMBER NOT NULL CONSTRAINT fk_cgpm_group REFERENCES crms_assignment_groups(group_id) ON DELETE CASCADE,
+        phase_code    VARCHAR2(20) NOT NULL CONSTRAINT chk_cgpm_phase CHECK (phase_code IN (''ALL'',''RD'',''FSD'',''DEV'',''TESTING'',''UAT'',''DEPLOYMENT'')),
+        created_at    TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+        CONSTRAINT uq_company_service_group_phase UNIQUE (company_id, service_id, group_id, phase_code)
+      )';
+    EXECUTE IMMEDIATE 'CREATE INDEX idx_cgpm_co_svc ON crms_company_group_phase_map(company_id, service_id)';
+    DBMS_OUTPUT.PUT_LINE('  CREATED : crms_company_group_phase_map');
+  ELSE DBMS_OUTPUT.PUT_LINE('  EXISTS  : crms_company_group_phase_map'); END IF;
+END;
+/
+
+-- TABLE: 31. crms_approval_groups
+DECLARE
+  v_exists NUMBER;
+BEGIN
+  SELECT COUNT(*) INTO v_exists FROM user_tables WHERE table_name = 'CRMS_APPROVAL_GROUPS';
+  IF v_exists = 0 THEN
+    EXECUTE IMMEDIATE '
+      CREATE TABLE crms_approval_groups (
+        ag_map_id    NUMBER         GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        company_name VARCHAR2(200),
+        service_name VARCHAR2(200),
+        module_id    NUMBER         CONSTRAINT fk_apgrp_mod REFERENCES crms_modules(module_id) ON DELETE CASCADE,
+        group_id     NUMBER         NOT NULL CONSTRAINT fk_apgrp_grp REFERENCES crms_assignment_groups(group_id) ON DELETE CASCADE,
+        phase_code   VARCHAR2(20)   DEFAULT ''RD'' NOT NULL,
+        created_at   TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL,
+        level_order  NUMBER         DEFAULT 1 NOT NULL
+      )';
+    EXECUTE IMMEDIATE 'CREATE INDEX idx_apgrp_company ON crms_approval_groups(company_name)';
+    EXECUTE IMMEDIATE 'CREATE INDEX idx_apgrp_module  ON crms_approval_groups(module_id)';
+    EXECUTE IMMEDIATE 'CREATE INDEX idx_apgrp_level   ON crms_approval_groups(phase_code,level_order)';
+    DBMS_OUTPUT.PUT_LINE('  CREATED : crms_approval_groups');
+  ELSE DBMS_OUTPUT.PUT_LINE('  EXISTS  : crms_approval_groups'); END IF;
+END;
+/
+
+-- TABLE: 32. crms_release_reviews
+DECLARE
+  v_exists NUMBER;
+BEGIN
+  SELECT COUNT(*) INTO v_exists FROM user_tables WHERE table_name = 'CRMS_RELEASE_REVIEWS';
+  IF v_exists = 0 THEN
+    EXECUTE IMMEDIATE '
+      CREATE TABLE crms_release_reviews (
+        review_id           NUMBER         GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        release_id          NUMBER         NOT NULL CONSTRAINT fk_rr_release REFERENCES crms_releases(release_id) ON DELETE CASCADE,
+        module_id           NUMBER         NOT NULL CONSTRAINT fk_rr_module REFERENCES crms_modules(module_id),
+        phase_code          VARCHAR2(20)   NOT NULL,
+        reviewer_user_id    NUMBER         NOT NULL CONSTRAINT fk_rr_reviewer REFERENCES crms_users(user_id),
+        created_by_user_id  NUMBER         NOT NULL CONSTRAINT fk_rr_created_by REFERENCES crms_users(user_id),
+        parent_review_id    NUMBER         CONSTRAINT fk_rr_parent REFERENCES crms_release_reviews(review_id),
+        status              VARCHAR2(20)   DEFAULT ''Pending'' NOT NULL CONSTRAINT chk_rr_status CHECK (status IN (''Pending'',''Referred'')),
+        actioned_at         TIMESTAMP,
+        created_at          TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL
+      )';
+    EXECUTE IMMEDIATE 'CREATE INDEX idx_rr_reviewer ON crms_release_reviews(reviewer_user_id, status)';
+    EXECUTE IMMEDIATE 'CREATE INDEX idx_rr_release  ON crms_release_reviews(release_id, phase_code)';
+    DBMS_OUTPUT.PUT_LINE('  CREATED : crms_release_reviews');
+  ELSE DBMS_OUTPUT.PUT_LINE('  EXISTS  : crms_release_reviews'); END IF;
 END;
 /
 
@@ -811,6 +946,22 @@ SELECT
 FROM crms_assignment_groups ag
 LEFT JOIN crms_releases r ON r.assignment_group_id = ag.group_id AND r.is_deleted = 0
 GROUP BY ag.group_id, ag.group_name;
+/
+
+CREATE OR REPLACE VIEW vw_company_group_phase AS
+SELECT
+  m.phase_map_id,
+  m.company_id,
+  c.company_name,
+  m.service_id,
+  s.service_name,
+  m.group_id,
+  g.group_name,
+  m.phase_code
+FROM crms_company_group_phase_map m
+JOIN crms_companies         c ON c.company_id  = m.company_id
+JOIN crms_services          s ON s.service_id  = m.service_id
+JOIN crms_assignment_groups g ON g.group_id    = m.group_id;
 /
 
 -- ============================================================
