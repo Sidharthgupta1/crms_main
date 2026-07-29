@@ -23,7 +23,7 @@ const DDL = [
   {
     name: 'SEQ: crms_release_seq',
     sql: `CREATE SEQUENCE crms_release_seq
-            START WITH     11973
+            START WITH     1
             INCREMENT BY   1
             NOCACHE
             NOCYCLE`,

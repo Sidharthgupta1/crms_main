@@ -5705,6 +5705,10 @@ async function advanceState(force) {
   // Approval phases — open approver selection modal
   var approvalStates = ['RD Phase', 'FSD Phase', 'Deployment Phase'];
   if (approvalStates.indexOf(cur) >= 0) {
+    if (cur === 'FSD Phase' && (!rel.crOwnerUserId || String(rel.crOwnerUserId) === '0')) {
+      showInfoModal('CR Owner Required', 'You must set a CR Owner before submitting the FSD Phase for approval.', true);
+      return;
+    }
     await openRdApprovalModal(rel);
     return;
   }

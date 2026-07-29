@@ -102,7 +102,12 @@ function hasReleaseTaskColumn(cols, name) {
 
 function fmtTaskDate(d) {
   if (!d) return null;
-  if (d instanceof Date) return d.toISOString().slice(0, 10);
+  if (d instanceof Date) {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  }
   return String(d).slice(0, 10);
 }
 
@@ -343,8 +348,8 @@ async function fullHistory(req, res, next) {
         requestedBy:                rel.REQUESTED_BY,
         assignedTo:                 rel.ASSIGNED_TO||'',
         assignmentGroup:            rel.ASSIGNMENT_GROUP||'',
-        plannedStartDate:           rel.PLANNED_START_DATE||null,
-        targetEndDate:              rel.TARGET_END_DATE||null,
+        plannedStartDate:           fmtTaskDate(rel.PLANNED_START_DATE),
+        targetEndDate:              fmtTaskDate(rel.TARGET_END_DATE),
         createdAt:                  rel.CREATED_AT,
         updatedAt:                  rel.UPDATED_AT,
         reasonOfChange:             rel.REASON_OF_CHANGE||'',
@@ -375,10 +380,10 @@ async function fullHistory(req, res, next) {
         state:            t.STATE,
         assignedTo:       t.ASSIGNED_TO||'',
         groupName:        t.GROUP_NAME||'',
-        plannedStartDate: t.PLANNED_START_DATE ? (t.PLANNED_START_DATE instanceof Date ? t.PLANNED_START_DATE.toISOString().slice(0,10) : String(t.PLANNED_START_DATE).slice(0,10)) : null,
-        plannedEndDate:   t.PLANNED_END_DATE   ? (t.PLANNED_END_DATE   instanceof Date ? t.PLANNED_END_DATE.toISOString().slice(0,10)   : String(t.PLANNED_END_DATE).slice(0,10))   : null,
-        actualStartDate:  t.ACTUAL_START_DATE  ? (t.ACTUAL_START_DATE  instanceof Date ? t.ACTUAL_START_DATE.toISOString().slice(0,10)  : String(t.ACTUAL_START_DATE).slice(0,10))  : null,
-        actualEndDate:    t.ACTUAL_END_DATE    ? (t.ACTUAL_END_DATE    instanceof Date ? t.ACTUAL_END_DATE.toISOString().slice(0,10)    : String(t.ACTUAL_END_DATE).slice(0,10))    : null,
+        plannedStartDate: fmtTaskDate(t.PLANNED_START_DATE),
+        plannedEndDate:   fmtTaskDate(t.PLANNED_END_DATE),
+        actualStartDate:  fmtTaskDate(t.ACTUAL_START_DATE),
+        actualEndDate:    fmtTaskDate(t.ACTUAL_END_DATE),
         closedAt:         t.CLOSED_AT||null,
         closedBy:         t.CLOSED_BY||'',
       }; }),
@@ -759,6 +764,9 @@ async function advanceState(req, res, next) {
     const approvalPhases = { 'RD Phase':'RD', 'FSD Phase':'FSD', 'Deployment Phase':'DEPLOYMENT' };
     if (approvalPhases[cur]) {
       const phaseCode = approvalPhases[cur];
+      if (phaseCode === 'FSD' && (!release.CR_OWNER_USER_ID || num(release.CR_OWNER_USER_ID) === '0')) {
+        return res.status(400).json({ error: 'Please set the CR Owner before submitting the FSD Phase for approval.' });
+      }
       // Sub-task gate — NOT required for RD phase, required for FSD and Deployment
       if (phaseCode !== 'RD') {
         const anyTask = await db.queryOne(
@@ -1150,7 +1158,7 @@ async function myPhaseTasks(req, res, next) {
       taskId:t.TASK_ID, taskNumber:t.TASK_NUMBER, phaseCode:t.PHASE_CODE,
       state:t.STATE, shortDescription:t.SHORT_DESCRIPTION, priority:t.PRIORITY,
       uploadAttachmentId:t.UPLOAD_ATTACHMENT_ID,
-      plannedStartDate:t.PLANNED_START_DATE, plannedEndDate:t.PLANNED_END_DATE,
+      plannedStartDate:fmtTaskDate(t.PLANNED_START_DATE), plannedEndDate:fmtTaskDate(t.PLANNED_END_DATE),
       closedAt:t.CLOSED_AT, assignmentGroup:t.ASSIGNMENT_GROUP,
       assignedTo:t.ASSIGNED_TO_NAME,
       requestedBy:t.REQUESTED_BY_NAME||'',
@@ -1207,8 +1215,8 @@ async function rdExport(req, res, next) {
       title:         row.TITLE,
       requestedBy:   row.REQUESTED_BY,
       priority:      row.PRIORITY,
-      plannedStartDate: row.PLANNED_START_DATE,
-      targetEndDate:    row.TARGET_END_DATE,
+      plannedStartDate: fmtTaskDate(row.PLANNED_START_DATE),
+      targetEndDate:    fmtTaskDate(row.TARGET_END_DATE),
       createdAt:        row.CREATED_AT,
       reasonOfChange:             row.REASON_OF_CHANGE||'',
       businessBenefitsProcess:    row.BUSINESS_BENEFITS_PROCESS||'',
@@ -1388,8 +1396,8 @@ function camelizeRelease(r) {
     summary:r.SUMMARY||'', company:r.COMPANY||'', service:r.SERVICE||'',
     requestedBy:r.REQUESTED_BY||'', assignedTo:r.ASSIGNED_TO||'',
     assignmentGroup:r.ASSIGNMENT_GROUP||'',
-    plannedStartDate:r.PLANNED_START_DATE||null,
-    targetEndDate:r.TARGET_END_DATE||null,
+    plannedStartDate:fmtTaskDate(r.PLANNED_START_DATE),
+    targetEndDate:fmtTaskDate(r.TARGET_END_DATE),
     moduleId:r.MODULE_ID||null,
     moduleName:r.MODULE_NAME||'',
     crOwnerUserId: r.CR_OWNER_USER_ID || null,
@@ -1530,8 +1538,8 @@ async function myReviews(req, res, next) {
         requestedBy:    r.REQUESTED_BY,
         assignedTo:     r.ASSIGNED_TO||'',
         assignmentGroup:r.ASSIGNMENT_GROUP||'',
-        plannedStartDate:   r.PLANNED_START_DATE||null,
-        targetEndDate:      r.TARGET_END_DATE||null,
+        plannedStartDate:   fmtTaskDate(r.PLANNED_START_DATE),
+        targetEndDate:      fmtTaskDate(r.TARGET_END_DATE),
         reasonOfChange:             r.REASON_OF_CHANGE||'',
         businessBenefitsProcess:    r.BUSINESS_BENEFITS_PROCESS||'',
         businessBenefitsQualitative:r.BUSINESS_BENEFITS_QUALITATIVE||'',
@@ -1544,10 +1552,10 @@ async function myReviews(req, res, next) {
           phaseCode:       t.PHASE_CODE,
           shortDescription:t.SHORT_DESCRIPTION||'',
           state:           t.STATE,
-          plannedStartDate:t.PLANNED_START_DATE||null,
-          plannedEndDate:  t.PLANNED_END_DATE||null,
-          actualStartDate: t.ACTUAL_START_DATE||null,
-          actualEndDate:   t.ACTUAL_END_DATE||null,
+          plannedStartDate:fmtTaskDate(t.PLANNED_START_DATE),
+          plannedEndDate:  fmtTaskDate(t.PLANNED_END_DATE),
+          actualStartDate: fmtTaskDate(t.ACTUAL_START_DATE),
+          actualEndDate:   fmtTaskDate(t.ACTUAL_END_DATE),
           assignedTo:      t.ASSIGNED_TO_NAME||'',
           groupName:       t.GROUP_NAME||'',
         }; }),
