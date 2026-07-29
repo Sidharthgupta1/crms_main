@@ -2754,6 +2754,15 @@ function onModuleChange() {
     return true; // no mapping configured — show all
   });
 
+  // A module's RD group is the authoritative assignment for a new CR. Older
+  // company/service mappings can be narrower and may not include that group.
+  // In that case, retain the module group instead of disabling the form.
+  if (!filtered.length && hasCompanyMapping && hasModuleMapping) {
+    filtered = REF.groups.filter(function(g) {
+      return moduleMappedGroups[String(g.groupId)];
+    });
+  }
+
   if (!filtered.length && (hasCompanyMapping || hasModuleMapping)) {
     agEl.innerHTML = '<option value="">— No groups configured for this selection —</option>';
     return;
