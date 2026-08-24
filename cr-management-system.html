@@ -165,6 +165,8 @@
   .form-field input:focus,.form-field select:focus,.form-field textarea:focus{border-color:var(--red)}
   .form-field input[readonly],.form-field select[disabled]{background:var(--grey-50);color:var(--grey-400);cursor:not-allowed}
   .form-field textarea{resize:vertical;min-height:80px}
+  .field-invalid{border-color:var(--red)!important;box-shadow:0 0 0 1px var(--red)}
+  .field-error-msg{color:var(--red);font-size:11px;font-weight:600;margin-top:-2px}
   .form-section-title{font-family:var(--font-cond);font-size:13px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:.6px;padding-bottom:6px;border-bottom:1px solid var(--red-light)}
 
   /* DETAIL TABS */
@@ -241,8 +243,11 @@
   .comment-input-row input:focus{border-color:var(--red)}
 
   /* TOAST */
-  .toast{position:fixed;bottom:24px;right:24px;background:var(--black);color:var(--white);padding:12px 18px;border-radius:var(--radius);font-size:13px;font-weight:500;z-index:999;opacity:0;transform:translateY(8px);transition:all .25s;pointer-events:none;max-width:320px}
-  .toast.show{opacity:1;transform:translateY(0)}.toast.red{background:var(--red)}.toast.green{background:var(--green)}
+  .toast-container{position:fixed;bottom:24px;right:24px;z-index:999;display:flex;flex-direction:column-reverse;gap:8px;pointer-events:none;max-width:320px}
+  .toast-chip{background:var(--black);color:var(--white);padding:12px 18px;border-radius:var(--radius);font-size:13px;font-weight:500;opacity:0;transform:translateY(8px);transition:all .25s}
+  .toast-chip.show{opacity:1;transform:translateY(0)}
+  .toast-chip.red{background:var(--red)}
+  .toast-chip.green{background:var(--green)}
   .hidden{display:none!important}
 
   /* SLA INDICATOR */
@@ -644,7 +649,7 @@ select.tl-cell {
 <body>
 
 <!-- Toast notifications (used by toast() for validation/error/success messages) -->
-<div id="toast" class="toast"></div>
+<div id="toast" class="toast-container"></div>
 
 <!-- AUTH -->
 <div id="auth-screen">
@@ -1457,7 +1462,7 @@ select.tl-cell {
     <div class="comment-list" id="comment-list"><div style="padding:20px;text-align:center;color:var(--grey-400);font-size:13px">No comments yet</div></div>
     <div class="comment-input-row">
       <input id="comment-input" placeholder="Add a comment…" onkeydown="if(event.key==='Enter')postComment()" />
-      <button class="btn btn-red btn-sm" onclick="postComment()">Post</button>
+      <button id="comment-post-btn" class="btn btn-red btn-sm" onclick="postComment()">Post</button>
     </div>
   </div>
 </div>
@@ -2112,26 +2117,42 @@ async function renderPendingApprovalsPanel() {
 }
 
 async function quickApprove(releaseId) {
-  const comments = prompt('Comments (optional):') || '';
-  const prev = activeDetailId;
-  activeDetailId = releaseId;
-  const result = await POST('/releases/' + releaseId + '/approve', { comments });
-  activeDetailId = prev;
-  if (!result) return;
-  toast(result.message, false, 'green');
-  renderDashboard();
+  showConfirmModal('Approve CR',
+    '<div class="form-field"><label>Comments (optional)</label>'+
+    '<textarea id="qa-comments" rows="3" style="width:100%;padding:8px 10px;border:1.5px solid var(--grey-200);border-radius:var(--radius);font-family:var(--font);font-size:13px;resize:vertical"></textarea></div>',
+    'Approve', 'var(--green)', async function() {
+      const comments = ((document.getElementById('qa-comments')||{}).value||'').trim();
+      const result = await withButtonLoading(document.getElementById('input-modal-save'), 'Approving…', async function() {
+        const prev = activeDetailId;
+        activeDetailId = releaseId;
+        const r = await POST('/releases/' + releaseId + '/approve', { comments });
+        activeDetailId = prev;
+        return r;
+      });
+      if (!result) return;
+      toast(result.message, false, 'green');
+      renderDashboard();
+    });
 }
 
 async function quickReject(releaseId) {
-  const comments = prompt('Rejection reason (required):');
-  if (!comments || !comments.trim()) { toast('Reason required', true); return; }
-  const prev = activeDetailId;
-  activeDetailId = releaseId;
-  const result = await POST('/releases/' + releaseId + '/reject', { comments });
-  activeDetailId = prev;
-  if (!result) return;
-  toast(result.message, false, 'green');
-  renderDashboard();
+  showConfirmModal('Reject CR',
+    '<div class="form-field"><label>Rejection reason <span class="req">*</span></label>'+
+    '<textarea id="qr-comments" rows="3" placeholder="Mandatory: explain why this CR is being rejected…" style="width:100%;padding:8px 10px;border:1.5px solid var(--grey-200);border-radius:var(--radius);font-family:var(--font);font-size:13px;resize:vertical"></textarea></div>',
+    'Reject', '#dc2626', async function() {
+      const comments = ((document.getElementById('qr-comments')||{}).value||'').trim();
+      if (!comments) { toast('Reason required', true); return false; }
+      const result = await withButtonLoading(document.getElementById('input-modal-save'), 'Rejecting…', async function() {
+        const prev = activeDetailId;
+        activeDetailId = releaseId;
+        const r = await POST('/releases/' + releaseId + '/reject', { comments });
+        activeDetailId = prev;
+        return r;
+      });
+      if (!result) return;
+      toast(result.message, false, 'green');
+      renderDashboard();
+    });
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -2472,25 +2493,49 @@ async function exportAudit() {
 // ══════════════════════════════════════════════════════════════════════
 // NOTIFICATIONS
 // ══════════════════════════════════════════════════════════════════════
+async function _notifTick() {
+  if (!accessToken) {
+    if (window._notifPollTimer) { clearInterval(window._notifPollTimer); window._notifPollTimer = null; }
+    return;
+  }
+  await renderNotifications();
+  // If a detail modal is open, silently refresh it so state changes are visible in real-time
+  if (activeDetailId && document.getElementById('detail-modal').classList.contains('open')) {
+    try {
+      var fresh = await GET('/releases/' + activeDetailId);
+      if (fresh && fresh.state) {
+        // Update state badge and phase bar silently (no full re-render)
+        document.getElementById('dm-state-badge').innerHTML = stateBadge(fresh.state);
+        document.getElementById('dm-cur-state').textContent = fresh.state;
+        renderPhaseBar(fresh.state);
+      }
+    } catch(e) {}
+  }
+}
+
+function _notifStartInterval() {
+  if (window._notifPollTimer) clearInterval(window._notifPollTimer);
+  window._notifPollTimer = setInterval(_notifTick, 30000);
+}
+
+// Poll every 30s while the tab is visible; pause entirely while hidden so a
+// backgrounded tab doesn't keep hitting the server for nothing, and catch up
+// with an immediate refresh the moment the user comes back.
 async function pollNotifications() {
   renderNotifications();
-  if(window._notifPollTimer)clearInterval(window._notifPollTimer);
-  window._notifPollTimer=setInterval(async function(){
-    if(!accessToken){clearInterval(window._notifPollTimer);return;}
-    await renderNotifications();
-    // If a detail modal is open, silently refresh it so state changes are visible in real-time
-    if (activeDetailId && document.getElementById('detail-modal').classList.contains('open')) {
-      try {
-        var fresh = await GET('/releases/' + activeDetailId);
-        if (fresh && fresh.state) {
-          // Update state badge and phase bar silently (no full re-render)
-          document.getElementById('dm-state-badge').innerHTML = stateBadge(fresh.state);
-          document.getElementById('dm-cur-state').textContent = fresh.state;
-          renderPhaseBar(fresh.state);
-        }
-      } catch(e) {}
-    }
-  }, 30000);
+  _notifStartInterval();
+
+  if (!window._notifVisibilityBound) {
+    window._notifVisibilityBound = true;
+    document.addEventListener('visibilitychange', function() {
+      if (document.hidden) {
+        if (window._notifPollTimer) { clearInterval(window._notifPollTimer); window._notifPollTimer = null; }
+      } else if (accessToken) {
+        _notifTick();
+        _notifStartInterval();
+      }
+    });
+  }
 }
 
 async function renderNotifications() {
@@ -2821,16 +2866,18 @@ async function _doCreateImpl() {
   var agId     = (document.getElementById('f-ag') || {}).value || '';
   var atId     = (document.getElementById('f-at')||{}).value || '';
 
-  if (!priority)         { toast('Priority is required', true); return; }
-  if (!title)            { toast('Title is required', true); return; }
-  if (!summary)          { toast('Summary is required', true); return; }
+  clearAllFieldInvalid(['f-priority','f-title','f-summary','f-reason','f-biz-process','f-biz-qual','f-cost','f-manpower','f-ag']);
+
+  if (!priority)     { toast('Priority is required', true); markFieldInvalid('f-priority', 'Priority is required'); return; }
+  if (!title)        { toast('Title is required', true); markFieldInvalid('f-title', 'Title is required'); return; }
+  if (!summary)      { toast('Summary is required', true); markFieldInvalid('f-summary', 'Summary is required'); return; }
   // startDt validation removed — date not collected in RD Phase
-  if (!reason)           { toast('Reason of Change is required', true); return; }
-  if (!bizP)             { toast('Business Benefits (Process) is required', true); return; }
-  if (!bizQ)             { toast('Business Benefits (Qualitative) is required', true); return; }
-  if (isNaN(cost))   { toast('Cost Saving must be a number', true); return; }
-  if (isNaN(manpow)) { toast('Manpower Saving must be a number', true); return; }
-  if (!agId)             { toast('Please select at least one Assignment Group', true); return; }
+  if (!reason)       { toast('Reason of Change is required', true); markFieldInvalid('f-reason', 'Reason of Change is required'); return; }
+  if (!bizP)         { toast('Business Benefits (Process) is required', true); markFieldInvalid('f-biz-process', 'This field is required'); return; }
+  if (!bizQ)         { toast('Business Benefits (Qualitative) is required', true); markFieldInvalid('f-biz-qual', 'This field is required'); return; }
+  if (isNaN(cost))   { toast('Cost Saving must be a number', true); markFieldInvalid('f-cost', 'Must be a number'); return; }
+  if (isNaN(manpow)) { toast('Manpower Saving must be a number', true); markFieldInvalid('f-manpower', 'Must be a number'); return; }
+  if (!agId)         { toast('Please select at least one Assignment Group', true); markFieldInvalid('f-ag', 'Please select a group'); return; }
   // Assigned To is optional — can be assigned later
 
   // endDt date validation removed — dates not in RD Phase
@@ -3350,7 +3397,10 @@ async function postComment() {
   const inp  = document.getElementById('comment-input');
   const text = inp.value.trim();
   if (!text) return;
-  const result = await POST(`/releases/${activeDetailId}/comments`, { text });
+  const btn = document.getElementById('comment-post-btn');
+  const result = await withButtonLoading(btn, 'Posting…', function() {
+    return POST(`/releases/${activeDetailId}/comments`, { text });
+  });
   if (!result) return;
   inp.value = '';
   await renderComments();
@@ -4383,11 +4433,13 @@ function tlUpdateBulkBar() {
 // ── Bulk actions ──────────────────────────────────────────────────────
 async function tlBulkDelete() {
   if (!tlCanEdit() || !_tlSelected.size) return;
-  if (!confirm('Delete '+_tlSelected.size+' row(s)?')) return;
-  var ids = (_tlRows||[]).filter(function(r){ return _tlSelected.has(r._id)&&r.taskListId; }).map(function(r){ return r.taskListId; });
-  if (ids.length) try { await api('DELETE','/task-list/bulk',{ids:ids}); } catch(e){}
-  _tlRows = (_tlRows||[]).filter(function(r){ return !_tlSelected.has(r._id); });
-  _tlSelected.clear(); tlRenderGrid();
+  var n = _tlSelected.size;
+  showConfirmModal('Delete Rows', '<p>Delete '+n+' row(s)? This cannot be undone.</p>', 'Delete', '#dc2626', async function() {
+    var ids = (_tlRows||[]).filter(function(r){ return _tlSelected.has(r._id)&&r.taskListId; }).map(function(r){ return r.taskListId; });
+    if (ids.length) try { await api('DELETE','/task-list/bulk',{ids:ids}); } catch(e){}
+    _tlRows = (_tlRows||[]).filter(function(r){ return !_tlSelected.has(r._id); });
+    _tlSelected.clear(); tlRenderGrid();
+  });
 }
 function tlBulkExport() {
   if (!_tlSelected.size) { toast('Select rows first', true); return; }
@@ -4397,11 +4449,12 @@ function tlBulkExport() {
 
 async function tlDeleteRow(id) {
   if (!tlCanEdit()) return;
-  if (!confirm('Delete this row?')) return;
-  var row = (_tlRows||[]).find(function(r){ return r._id===id; });
-  if (row&&row.taskListId) try { await api('DELETE','/task-list/'+row.taskListId,{}); } catch(e){}
-  _tlRows = (_tlRows||[]).filter(function(r){ return r._id!==id; });
-  _tlSelected.delete(id); tlRenderGrid();
+  showConfirmModal('Delete Row', '<p>Delete this row? This cannot be undone.</p>', 'Delete', '#dc2626', async function() {
+    var row = (_tlRows||[]).find(function(r){ return r._id===id; });
+    if (row&&row.taskListId) try { await api('DELETE','/task-list/'+row.taskListId,{}); } catch(e){}
+    _tlRows = (_tlRows||[]).filter(function(r){ return r._id!==id; });
+    _tlSelected.delete(id); tlRenderGrid();
+  });
 }
 
 // ── Export ────────────────────────────────────────────────────────────
@@ -5107,11 +5160,14 @@ async function addApprovalGroupMapping() {
 }
 
 async function deleteApprovalGroupMapping(id) {
-  if (!confirm('Remove this approval group mapping?')) return;
-  var result = await api('DELETE', '/admin/approval-groups/'+id, {});
-  if (!result) return;
-  toast('Removed', false, 'green');
-  renderApprovalGroupMappings();
+  showConfirmModal('Remove Mapping', '<p>Remove this approval group mapping?</p>', 'Remove', '#dc2626', async function() {
+    var result = await withButtonLoading(document.getElementById('input-modal-save'), 'Removing…', function() {
+      return api('DELETE', '/admin/approval-groups/'+id, {});
+    });
+    if (!result) return;
+    toast('Removed', false, 'green');
+    renderApprovalGroupMappings();
+  });
 }
 // ══════════════════════════════════════════════════════════════════════
 // END RD APPROVAL GROUP MAPPINGS
@@ -5194,7 +5250,9 @@ async function openAddUser() {
     const p = document.getElementById('im-pass').value;
     const r = document.getElementById('im-role').value;
     if (!n||!id||!p) { toast('All fields required', true); return; }
-    const result = await POST('/admin/users', { fullName:n, initials:id, role:r, password:p });
+    const result = await withButtonLoading(document.getElementById('input-modal-save'), 'Adding…', function() {
+      return POST('/admin/users', { fullName:n, initials:id, role:r, password:p });
+    });
     if (!result) return;
     await loadReferenceData(); closeModal('input-modal'); renderAdmin(); populateDownloadFilters();
     toast(`User ${n} added`, false, 'green');
@@ -5214,13 +5272,16 @@ async function openAddGroup() {
     const n    = document.getElementById('im-gname').value.trim();
     const uIds = [...document.getElementById('im-gmem').selectedOptions].map(o => parseInt(o.value));
     if (!n) { toast('Group name required', true); return; }
-    const result = await POST('/admin/groups', { groupName:n });
-    if (result && uIds.length) {
-      // get the new group's id and add members
-      await loadReferenceData();
-      var newGrp = REF.groups.find(function(g) { return g.groupName === n; });
-      if (newGrp) await PUT('/admin/groups/' + newGrp.groupId + '/members', { userIds: uIds });
-    }
+    const result = await withButtonLoading(document.getElementById('input-modal-save'), 'Adding…', async function() {
+      const r = await POST('/admin/groups', { groupName:n });
+      if (r && uIds.length) {
+        // get the new group's id and add members
+        await loadReferenceData();
+        var newGrp = REF.groups.find(function(g) { return g.groupName === n; });
+        if (newGrp) await PUT('/admin/groups/' + newGrp.groupId + '/members', { userIds: uIds });
+      }
+      return r;
+    });
     if (!result) return;
     await loadReferenceData(); closeModal('input-modal'); renderAdmin(); populateDownloadFilters();
     toast('Group added', false, 'green');
@@ -5456,7 +5517,9 @@ async function openAddCompany() {
   document.getElementById('input-modal-save').onclick = async () => {
     const n = document.getElementById('im-comp').value.trim();
     if (!n) { toast('Name required', true); return; }
-    const result = await POST('/admin/companies', { companyName: n });
+    const result = await withButtonLoading(document.getElementById('input-modal-save'), 'Adding…', function() {
+      return POST('/admin/companies', { companyName: n });
+    });
     if (!result) return;
     await loadReferenceData(); closeModal('input-modal'); renderAdmin();
     toast('Company added', false, 'green');
@@ -5470,7 +5533,9 @@ async function openAddService() {
   document.getElementById('input-modal-save').onclick = async () => {
     const n = document.getElementById('im-svc').value.trim();
     if (!n) { toast('Name required', true); return; }
-    const result = await POST('/admin/services', { serviceName: n });
+    const result = await withButtonLoading(document.getElementById('input-modal-save'), 'Adding…', function() {
+      return POST('/admin/services', { serviceName: n });
+    });
     if (!result) return;
     await loadReferenceData(); closeModal('input-modal'); renderAdmin();
     toast('Service added', false, 'green');
@@ -5523,13 +5588,84 @@ function showDbConnectingBanner() {
   setTimeout(function() { var b = document.getElementById('db-connecting-banner'); if(b) b.remove(); }, 30000);
 }
 
+var TOAST_MAX_VISIBLE = 4;
+
 function toast(msg, isError, type) {
-  var t = document.getElementById('toast');
-  if (!t) return;
-  t.textContent = String(msg || '');
-  t.className   = 'toast show' + (type === 'green' ? ' green' : isError ? ' red' : '');
-  clearTimeout(t._t);
-  t._t = setTimeout(function() { t.classList.remove('show'); }, 3200);
+  var container = document.getElementById('toast');
+  if (!container) return;
+
+  // Cap simultaneous chips so a runaway loop can't spam the screen —
+  // drop the oldest (first child, since column-reverse puts newest last).
+  while (container.children.length >= TOAST_MAX_VISIBLE) {
+    var oldest = container.firstElementChild;
+    if (!oldest) break;
+    clearTimeout(oldest._t);
+    oldest.remove();
+  }
+
+  var chip = document.createElement('div');
+  chip.className = 'toast-chip' + (type === 'green' ? ' green' : isError ? ' red' : '');
+  chip.textContent = String(msg || '');
+  container.appendChild(chip);
+
+  // Force a reflow before adding .show so the transition animates in.
+  void chip.offsetWidth;
+  chip.classList.add('show');
+
+  chip._t = setTimeout(function() {
+    chip.classList.remove('show');
+    setTimeout(function() { chip.remove(); }, 260); // let the fade-out transition finish
+  }, 3200);
+}
+
+// Highlights the offending input (red border + inline message under it) to
+// complement the corner toast — makes it obvious *which* field needs fixing.
+// Auto-clears the moment the user edits that field.
+function markFieldInvalid(inputId, message) {
+  var el = document.getElementById(inputId);
+  if (!el) return;
+  el.classList.add('field-invalid');
+  var errId = inputId + '-err';
+  var errEl = document.getElementById(errId);
+  if (!errEl) {
+    errEl = document.createElement('div');
+    errEl.id = errId;
+    errEl.className = 'field-error-msg';
+    el.insertAdjacentElement('afterend', errEl);
+  }
+  errEl.textContent = message;
+  el.focus();
+  var clearOnEdit = function() {
+    clearFieldInvalid(inputId);
+    el.removeEventListener('input', clearOnEdit);
+    el.removeEventListener('change', clearOnEdit);
+  };
+  el.addEventListener('input', clearOnEdit);
+  el.addEventListener('change', clearOnEdit);
+}
+function clearFieldInvalid(inputId) {
+  var el = document.getElementById(inputId);
+  if (el) el.classList.remove('field-invalid');
+  var errEl = document.getElementById(inputId + '-err');
+  if (errEl) errEl.remove();
+}
+function clearAllFieldInvalid(ids) {
+  (ids || []).forEach(clearFieldInvalid);
+}
+
+// Disables `btn` and swaps its text to `loadingText` for the duration of `fn`,
+// restoring the original state afterward regardless of success/failure.
+async function withButtonLoading(btn, loadingText, fn) {
+  if (!btn) return fn();
+  var orig = btn.textContent, wasDisabled = btn.disabled;
+  btn.disabled = true;
+  btn.textContent = loadingText;
+  try {
+    return await fn();
+  } finally {
+    btn.disabled = wasDisabled;
+    btn.textContent = orig;
+  }
 }
 
 function downloadCSVData(rows, filename) {
@@ -6232,9 +6368,12 @@ async function downloadAttachment(attachmentId) {
 }
 
 async function deleteAttachment(attachmentId) {
-  if (!confirm('Remove this attachment?')) return;
-  var res = await api('DELETE', '/releases/' + activeDetailId + '/attachments/' + attachmentId);
-  if (res !== null) { toast('Attachment removed', false, 'green'); renderAttachments(); }
+  showConfirmModal('Remove Attachment', '<p>Remove this attachment? This cannot be undone.</p>', 'Remove', '#dc2626', async function() {
+    var res = await withButtonLoading(document.getElementById('input-modal-save'), 'Removing…', function() {
+      return api('DELETE', '/releases/' + activeDetailId + '/attachments/' + attachmentId);
+    });
+    if (res !== null) { toast('Attachment removed', false, 'green'); renderAttachments(); }
+  });
 }
 
 async function submitToFSD() {
@@ -6500,7 +6639,9 @@ async function openAddModule() {
   document.getElementById('input-modal-save').onclick = async () => {
     const n = document.getElementById('im-modname').value.trim();
     if (!n) { toast('Module name required', true); return; }
-    const r = await POST('/modules', { moduleName: n, description: document.getElementById('im-moddesc').value.trim() || null });
+    const r = await withButtonLoading(document.getElementById('input-modal-save'), 'Adding…', function() {
+      return POST('/modules', { moduleName: n, description: document.getElementById('im-moddesc').value.trim() || null });
+    });
     if (!r) return;
     await loadReferenceData();
     closeModal('input-modal'); renderModules();
@@ -7154,13 +7295,18 @@ async function approveRelease() {
 }
 
 async function rejectRelease() {
-  const comments = prompt('Rejection reason (required):');
-  if (!comments || !comments.trim()) { toast('Rejection reason is required', true); return; }
-  const result = await POST('/releases/' + activeDetailId + '/reject', { comments });
-  if (!result) return;
-  toast(result.message, false, 'green');
-  await openDetail(activeDetailId);
-  renderDashboard();
+  showConfirmModal('Reject CR',
+    '<div class="form-field"><label>Rejection reason <span class="req">*</span></label>'+
+    '<textarea id="rr-comments" rows="3" placeholder="Mandatory: explain why this CR is being rejected…" style="width:100%;padding:8px 10px;border:1.5px solid var(--grey-200);border-radius:var(--radius);font-family:var(--font);font-size:13px;resize:vertical"></textarea></div>',
+    'Reject', '#dc2626', async function() {
+      const comments = ((document.getElementById('rr-comments')||{}).value||'').trim();
+      if (!comments) { toast('Rejection reason is required', true); return false; }
+      const result = await POST('/releases/' + activeDetailId + '/reject', { comments });
+      if (!result) return;
+      toast(result.message, false, 'green');
+      await openDetail(activeDetailId);
+      renderDashboard();
+    });
 }
 
 // Show approval buttons in detail modal based on state + user role
@@ -7565,7 +7711,9 @@ async function promptApproveReject(releaseId, action, opts) {
       body.selectedApproverId = parseInt(nextId, 10);
     }
     var endpoint = '/releases/' + releaseId + '/' + action;
-    var result = await POST(endpoint, body);
+    var result = await withButtonLoading(document.getElementById('input-modal-save'), isApprove ? 'Approving…' : 'Rejecting…', function() {
+      return POST(endpoint, body);
+    });
     if (!result) return;
     var rnum = opts.releaseNumber || '';
     toast(result.message || (isApprove ? (rnum ? '✅ '+rnum+' approved' : 'Approved!') : (rnum ? '↩ '+rnum+' rejected' : 'Rejected')), false, isApprove ? 'green' : '');
@@ -8298,11 +8446,12 @@ async function saveTaskEdits(taskId){
   var agId=agEl?agEl.value:'',atId=atEl?atEl.value:'';
   var start=startEl?startEl.value:'',end=endEl?endEl.value:'';
   var actStart=actStartEl?actStartEl.value:'',actualEnd=actEndEl?actEndEl.value:'';
-  if(!agId){toast('Assignment Group is required',true);agEl&&agEl.focus();return;}
-  if(!atId){toast('Assigned To is required',true);atEl&&atEl.focus();return;}
-  if(!end){toast('Planned End Date is required',true);endEl&&endEl.focus();return;}
+  clearAllFieldInvalid(['te-ag','te-at','te-end','te-start']);
+  if(!agId){toast('Assignment Group is required',true);markFieldInvalid('te-ag','Assignment Group is required');return;}
+  if(!atId){toast('Assigned To is required',true);markFieldInvalid('te-at','Assigned To is required');return;}
+  if(!end){toast('Planned End Date is required',true);markFieldInvalid('te-end','Planned End Date is required');return;}
   var startIsEditable=startEl&&startEl.type==='date';
-  if(startIsEditable&&!start){toast('Planned Start Date is required',true);startEl.focus();return;}
+  if(startIsEditable&&!start){toast('Planned Start Date is required',true);markFieldInvalid('te-start','Planned Start Date is required');return;}
   if(start&&end&&end<start){toast('End date cannot be before start date',true);return;}
   if(actualEnd&&start&&actualEnd<start){toast('Actual completion cannot be before start date',true);return;}
   var origEnd=panel?(panel.dataset.origEnd||''):'';
@@ -8398,19 +8547,20 @@ async function closeSubTask(taskId) {
       return;
     }
   }
-  if (!confirm('Close this sub-task? This action cannot be undone.')) return;
-  var res = await api('PATCH', '/releases/'+activeDetailId+'/phase-tasks/'+taskId+'/close', {});
-  if (!res) return;
-  toast('\u2705 Task closed', false, 'green');
-  var r = await GET('/releases/'+activeDetailId);
-  if (!r) return;
-  _currentRelease = r;
-  renderSubTasksFromData(r.phaseTasks||[], r);
-  renderApprovalActions(r);
-  renderPhaseBar(r.state);
-  document.getElementById('dm-state-badge').innerHTML = stateBadge(r.state);
-  // Re-open detail panel for the closed task
-  if (_activeTaskId) setTimeout(function(){ openSubTaskDetail(taskId); }, 100);
+  showConfirmModal('Close Sub-Task', '<p>Close this sub-task? This action cannot be undone.</p>', 'Close Task', '#dc2626', async function() {
+    var res = await api('PATCH', '/releases/'+activeDetailId+'/phase-tasks/'+taskId+'/close', {});
+    if (!res) return;
+    toast('\u2705 Task closed', false, 'green');
+    var r = await GET('/releases/'+activeDetailId);
+    if (!r) return;
+    _currentRelease = r;
+    renderSubTasksFromData(r.phaseTasks||[], r);
+    renderApprovalActions(r);
+    renderPhaseBar(r.state);
+    document.getElementById('dm-state-badge').innerHTML = stateBadge(r.state);
+    // Re-open detail panel for the closed task
+    if (_activeTaskId) setTimeout(function(){ openSubTaskDetail(taskId); }, 100);
+  });
 }
 
 async function downloadPhaseTemplate(moduleId, phaseCode) {
