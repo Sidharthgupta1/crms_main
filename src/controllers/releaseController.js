@@ -467,6 +467,23 @@ async function getOne(req, res, next) {
     );
     if (!row) return res.status(404).json({ error:'Release not found' });
 
+    if (req.user.role !== 'admin') {
+      const uid = num(req.user.userId);
+      const access = await db.queryOne(
+        'SELECT 1 AS ok FROM dual WHERE '+
+        '  EXISTS (SELECT 1 FROM crms_releases rr WHERE rr.release_id='+rid+' AND ('+
+        '    rr.requested_by='+uid+' OR rr.assigned_to_user_id='+uid+' OR rr.cr_owner_user_id='+uid+
+        '    OR rr.module_id IN (SELECT DISTINCT pg.module_id FROM crms_phase_groups pg'+
+        '      WHERE pg.group_id IN (SELECT group_id FROM crms_group_members WHERE user_id='+uid+'))'+
+        '  ))'+
+        '  OR EXISTS (SELECT 1 FROM crms_release_tasks rt WHERE rt.release_id='+rid+' AND rt.assigned_to='+uid+')'+
+        '  OR EXISTS (SELECT 1 FROM crms_release_approvals ra WHERE ra.release_id='+rid+' AND ra.approver_user_id='+uid+')'+
+        '  OR EXISTS (SELECT 1 FROM crms_review_requests r2 WHERE r2.release_id='+rid+' AND (r2.reviewer_id='+uid+' OR r2.passed_to='+uid+'))',
+        {}
+      );
+      if (!access) return res.status(403).json({ error:'You do not have access to this CR' });
+    }
+
     const curLevel = Number(row.CURRENT_APPROVAL_LEVEL||0);
     let canApprove = false;
     const viewerUid = req.user ? num(req.user.userId) : '0';
