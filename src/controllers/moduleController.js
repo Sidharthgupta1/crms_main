@@ -211,6 +211,7 @@ async function updateFlow(req, res, next) {
 
     // Single phase: { phaseCode, levels }
     if (phaseCode && Array.isArray(levels)) {
+      if (!APPROVAL_PHASES.includes(phaseCode)) return res.status(422).json({ error:'Approval phases: DRAFT, RD, FSD, DEPLOYMENT' });
       await saveLevels(mid, phaseCode, levels);
       return res.json({ message:'Approval flow saved for '+phaseCode });
     }
@@ -256,6 +257,7 @@ async function uploadTemplate(req, res, next) {
   try {
     const mid       = num(req.params.moduleId);
     const phaseCode = req.params.phaseCode.toUpperCase();
+    if (!ALL_PHASES.includes(phaseCode)) return res.status(422).json({ error:'Invalid phase: '+phaseCode });
     const uid       = num(req.user.userId);
     const { fileName, fileType, fileData } = req.body;
     if (!fileName || !fileData) return res.status(422).json({ error:'fileName and fileData required' });
@@ -300,6 +302,7 @@ async function downloadTemplate(req, res, next) {
   try {
     const mid       = num(req.params.moduleId);
     const phaseCode = req.params.phaseCode.toUpperCase();
+    if (!ALL_PHASES.includes(phaseCode)) return res.status(422).json({ error:'Invalid phase: '+phaseCode });
     const row = await db.queryOne(
       "SELECT file_name,file_type,file_data FROM crms_phase_templates WHERE module_id="+mid+" AND phase_code='"+phaseCode+"'", {}
     );

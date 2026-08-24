@@ -412,7 +412,7 @@ async function createApprovalGroupMapping(req, res, next) {
       "INSERT INTO crms_approval_groups(company_name,service_name,module_id,group_id,phase_code,level_order) VALUES("+
       (companyName?"'"+safe(companyName)+"'":'NULL')+","+
       (serviceName?"'"+safe(serviceName)+"'":'NULL')+","+
-      (moduleId?num(moduleId):'NULL')+","+num(groupId)+","+"'"+(phaseCode||'RD')+"',"+lvl+")", {}
+      (moduleId?num(moduleId):'NULL')+","+num(groupId)+","+"'"+safe(phaseCode||'RD')+"',"+lvl+")", {}
     );
     return res.status(201).json({ message:'Created' });
   } catch(err) { next(err); }

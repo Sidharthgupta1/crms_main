@@ -526,10 +526,11 @@ async function handleInboundWebhook(body, db) {
   }
 
   // Log the webhook to CRMS audit
+  const detailsText = ('SNow ' + (snowNumber||'') + ' state=' + snowState + ' approval=' + String(approval||'')).replace(/'/g,"''");
   await db.executeWithCommit(
     "INSERT INTO crms_audit(action,performed_by,cr_number,details) " +
-    "VALUES('ServiceNow Webhook',1,'" + crmsReleaseNum + "'," +
-    "'SNow ' + '" + (snowNumber||'') + "' state=" + snowState + " approval=" + approval + "')", {}
+    "VALUES('ServiceNow Webhook',1,'" + crmsReleaseNum.replace(/'/g,"''") + "'," +
+    "'" + detailsText + "')", {}
   );
 
   // Handle approval decision from ServiceNow
