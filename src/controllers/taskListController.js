@@ -57,6 +57,15 @@ async function ensureTaskListRow(releaseNumber, updateFields) {
   //   md50St, md50End, devSt, devEnd, tftSt, tftEnd,
   //   rdApprovalDt, uatClosedOn, deployedSamil, deployedMswil,
   //   approved1On, approved2On, approved3On }
+  //
+  // NOTE ON THE RACE WINDOW: the SELECT-then-branch below is not atomic —
+  // two concurrent calls for the same releaseNumber (e.g. CR creation and
+  // an RD sub-task upsert firing close together) can both see "no row" and
+  // both attempt an INSERT. `scripts/crms_task_list_dedupe_ddl.sql` adds a
+  // unique index on (cr_number) for non-deleted rows so the loser of that
+  // race gets ORA-00001 instead of a silent duplicate row; runUpdate() is
+  // reused as the fallback so that call still lands its data correctly.
+  // Without that index applied, this still behaves exactly as before.
   try {
     const existing = await rawQueryOne(
       "SELECT task_list_id FROM crms_task_list " +
@@ -64,7 +73,7 @@ async function ensureTaskListRow(releaseNumber, updateFields) {
       "FETCH FIRST 1 ROWS ONLY"
     );
 
-    if (existing) {
+    async function runUpdate() {
       // ── UPDATE existing row ────────────────────────────────────────
       const sets = [];
       const f = updateFields;
@@ -123,6 +132,10 @@ async function ensureTaskListRow(releaseNumber, updateFields) {
         );
         logger.info('[TL] ensureTaskListRow UPDATE', { releaseNumber, fields: Object.keys(updateFields) });
       }
+    }
+
+    if (existing) {
+      await runUpdate();
     } else {
       // ── INSERT new row ─────────────────────────────────────────────
       const f = updateFields;
@@ -158,10 +171,22 @@ async function ensureTaskListRow(releaseNumber, updateFields) {
         "1",
         s(f.createdBy || '1'),
       ];
-      await rawExec(
-        "INSERT INTO crms_task_list (" + cols.join(',') + ") VALUES (" + vals.join(',') + ")"
-      );
-      logger.info('[TL] ensureTaskListRow INSERT', { releaseNumber });
+      try {
+        await rawExec(
+          "INSERT INTO crms_task_list (" + cols.join(',') + ") VALUES (" + vals.join(',') + ")"
+        );
+        logger.info('[TL] ensureTaskListRow INSERT', { releaseNumber });
+      } catch (insErr) {
+        // Lost the race to a concurrent INSERT for the same cr_number —
+        // ORA-00001 against uq_tl_cr_number_active (see comment above).
+        // Fall back to updating the row the other call just created.
+        if (insErr.message && insErr.message.indexOf('ORA-00001') >= 0) {
+          logger.info('[TL] ensureTaskListRow INSERT raced, falling back to UPDATE', { releaseNumber });
+          await runUpdate();
+        } else {
+          throw insErr;
+        }
+      }
     }
   } catch(e) {
     logger.error('[TL] ensureTaskListRow FAILED', {
@@ -282,8 +307,9 @@ async function updatePhaseDate(crNumber, toState, approverNameOrUid) {
       'Deployment Phase':         { deployedSamil: today, stage: 'DEPLOYMENT' },
       'DBA Deployment Phase':     { deployedSamil: today, stage: 'DBA DEPLOYMENT' },
       'Observation Phase':        { stage: 'UNDER OBSERVATION' },
+      // 'Deployment Phase' already sets deployedSamil earlier in the lifecycle —
+      // Closed is the later/terminal marker, so it sets deployedMswil.
       'Closed':                   { deployedMswil: today, stage: 'DEPLOYMENT', status: 'COMPLETE' },
-      'Closed':                   { deployedSamil: today, stage: 'DEPLOYMENT', status: 'COMPLETE' },
       'Cancelled':                { stage: 'DROP', status: 'DROP' },
       'On Hold':                  { stage: 'FOLLOW UP' },
     };
@@ -384,11 +410,27 @@ async function getTaskList(req, res, next) {
   } catch(err) { next(err); }
 }
 
+async function isTaskListEditor(req) {
+  if (req.user.role === 'admin') return true;
+  const row = await db.queryOne('SELECT editor_id FROM crms_task_list_editors WHERE user_id=' + n(req.user.userId), {});
+  return !!row;
+}
+
 async function canEdit(req, res, next) {
   try {
-    if (req.user.role === 'admin') return res.json({ canEdit: true });
-    const row = await db.queryOne('SELECT editor_id FROM crms_task_list_editors WHERE user_id=' + n(req.user.userId), {});
-    return res.json({ canEdit: !!row });
+    return res.json({ canEdit: await isTaskListEditor(req) });
+  } catch(err) { next(err); }
+}
+
+// Middleware: the UI only ever shows create/update/delete/bulk-write
+// controls to editors, but that was previously enforced client-side only —
+// any authenticated user could call these endpoints directly and bypass it.
+// Does NOT apply to save-manual(-bulk): those 3 fields are intentionally
+// editable by every authenticated user regardless of editor status.
+async function requireTaskListEditor(req, res, next) {
+  try {
+    if (await isTaskListEditor(req)) return next();
+    return res.status(403).json({ error: 'Task List editor access required' });
   } catch(err) { next(err); }
 }
 
@@ -535,13 +577,17 @@ async function getLiveTaskList(req, res, next) {
 
     // ── 4. Load existing task-list rows for manual fields ────────────
     // (Delay Reason, Comments, Tracker Comments set by users)
+    // Ordered most-recently-updated first: if a duplicate row ever exists
+    // for a cr_number (pre-existing data from before the uq_tl_cr_number_active
+    // index — see crms_task_list_dedupe_ddl.sql), the newest one wins
+    // deterministically instead of whichever the DB happens to return first.
     const tlRows = await db.query(
-      "SELECT cr_number,delay_reason,comments,tracker_comments " +
-      "FROM crms_task_list WHERE is_deleted=0", {}
+      "SELECT cr_number,delay_reason,comments,tracker_comments,updated_at " +
+      "FROM crms_task_list WHERE is_deleted=0 ORDER BY updated_at DESC", {}
     ).catch(function(){ return []; });
 
     const tlMap = {};
-    tlRows.forEach(function(r){ tlMap[r.CR_NUMBER] = r; });
+    tlRows.forEach(function(r){ if (!tlMap[r.CR_NUMBER]) tlMap[r.CR_NUMBER] = r; });
 
     // ── 5. Index tasks and history by release_id ──────────────────────
     const tasksByRel = {};
@@ -588,6 +634,18 @@ async function getLiveTaskList(req, res, next) {
       'Closed':'DEPLOYMENT','Cancelled':'DROP','On Hold':'FOLLOW UP',
     };
 
+    // State → current sub-task phase, so "Pending With" reflects who's
+    // actually holding the CR right now rather than whoever has the
+    // oldest still-open sub-task across any past phase.
+    var stateToPhase = {
+      'RD Phase':'RD','RD Awaiting Approval L1':'RD','RD Awaiting Approval L2':'RD','RD Awaiting Approval L3':'RD',
+      'RD Approval L1':'RD','RD Approval L2':'RD','RD Approval L3':'RD',
+      'FSD Phase':'FSD','FSD Awaiting Approval L1':'FSD','FSD Awaiting Approval L2':'FSD','FSD Awaiting Approval L3':'FSD',
+      'Development Phase':'DEV','Testing Phase':'TESTING','UAT Phase':'UAT',
+      'Deployment Approval L1':'DEPLOYMENT','Deployment Approval L2':'DEPLOYMENT','Deployment Approval L3':'DEPLOYMENT',
+      'Deployment Phase':'DEPLOYMENT','DBA Deployment Phase':'DBA_DEPLOYMENT','Observation Phase':'OBSERVATION',
+    };
+
     var rows = releases.map(function(rel) {
       var rid    = rel.RELEASE_ID;
       var relNum = rel.RELEASE_NUMBER;
@@ -599,11 +657,15 @@ async function getLiveTaskList(req, res, next) {
       function pt(phase) { return rTasks.find(function(t){ return t.PHASE_CODE===phase; }) || null; }
       function ptAll(phase) { return rTasks.filter(function(t){ return t.PHASE_CODE===phase; }); }
 
-      // Current assignee = latest sub-task assignee in current phase
-      // or current_assignee from releases
+      // Current assignee = the open sub-task assignee for the CR's CURRENT
+      // phase specifically — not just the oldest open sub-task across any
+      // phase, which could point at a stale assignee from a phase the CR
+      // has already moved past (e.g. an RD sub-task nobody ever closed).
       var pendingWith = rel.CURRENT_ASSIGNEE || '';
-      // More precise: find the open task assignee
-      var openTask = rTasks.find(function(t){ return t.STATE==='Open' && t.ASSIGNED_TO; });
+      var curPhase = stateToPhase[rel.STATE];
+      var openTask = rTasks.find(function(t){
+        return t.STATE==='Open' && t.ASSIGNED_TO && (!curPhase || t.PHASE_CODE===curPhase);
+      });
       if (openTask) pendingWith = openTask.ASSIGNED_TO;
 
       // Stage = from current state
@@ -685,6 +747,7 @@ async function getLiveTaskList(req, res, next) {
         delayReason:     tlRow.DELAY_REASON      || '',
         comments:        tlRow.COMMENTS          || '',
         trackerComments: tlRow.TRACKER_COMMENTS  || '',
+        notesUpdatedAt:  tlRow.UPDATED_AT         || null,
         // RD approval
         rdApprovalDt:    rdApprDt,
         // MD50 (FSD phase)
@@ -716,46 +779,79 @@ async function getLiveTaskList(req, res, next) {
     return res.json(rows);
   } catch(err) { next(err); }
 }
-// ── POST /task-list/save-manual — save 3 editable fields for one CR ──
-async function saveManual(req, res, next) {
+// ── Shared core: upsert the 3 manually-editable fields for one CR ─────
+// Returns { ok:true } on success or { ok:false, error } on a validation/DB
+// failure — never throws for a validation problem, so callers (bulk save
+// in particular) can report per-row outcomes instead of losing them.
+async function _saveManualCore(crNumber, delayReason, comments, trackerComments, uid) {
+  if (!crNumber) return { ok: false, error: 'crNumber required' };
+  const sq = function(v) { return v != null ? String(v).replace(/'/g,"''") : ''; };
   try {
-    const { crNumber, delayReason, comments, trackerComments } = req.body;
-    if (!crNumber) return res.status(422).json({ error: 'crNumber required' });
-    const s = function(v) { return v != null ? String(v).replace(/'/g,"''") : ''; };
-    // Upsert into crms_task_list for the editable columns only
-    // Check if row exists
     const existing = await db.queryOne(
-      "SELECT task_list_id FROM crms_task_list WHERE cr_number='" + s(crNumber) + "' AND is_deleted=0 FETCH FIRST 1 ROWS ONLY", {}
+      "SELECT task_list_id FROM crms_task_list WHERE cr_number='" + sq(crNumber) + "' AND is_deleted=0 FETCH FIRST 1 ROWS ONLY", {}
     );
     if (existing) {
       await db.executeWithCommit(
         "UPDATE crms_task_list SET " +
-        "delay_reason='"     + s(delayReason||'')     + "'," +
-        "comments='"         + s(comments||'')         + "'," +
-        "tracker_comments='" + s(trackerComments||'')  + "' " +
-        "WHERE cr_number='"  + s(crNumber)             + "' AND is_deleted=0", {}
+        "delay_reason='"     + sq(delayReason||'')     + "'," +
+        "comments='"         + sq(comments||'')         + "'," +
+        "tracker_comments='" + sq(trackerComments||'')  + "' " +
+        "WHERE cr_number='"  + sq(crNumber)             + "' AND is_deleted=0", {}
       );
     } else {
-      await db.executeWithCommit(
-        "INSERT INTO crms_task_list(cr_number,delay_reason,comments,tracker_comments,auto_populated,created_by) " +
-        "VALUES('" + s(crNumber) + "','" + s(delayReason||'') + "','" + s(comments||'') + "','" + s(trackerComments||'') + "',1," + n(req.user.userId) + ")", {}
-      );
+      try {
+        await db.executeWithCommit(
+          "INSERT INTO crms_task_list(cr_number,delay_reason,comments,tracker_comments,auto_populated,created_by) " +
+          "VALUES('" + sq(crNumber) + "','" + sq(delayReason||'') + "','" + sq(comments||'') + "','" + sq(trackerComments||'') + "',1," + n(uid) + ")", {}
+        );
+      } catch (insErr) {
+        // Lost the race to a concurrent insert for the same cr_number — retry as UPDATE.
+        if (insErr.message && insErr.message.indexOf('ORA-00001') >= 0) {
+          await db.executeWithCommit(
+            "UPDATE crms_task_list SET " +
+            "delay_reason='"     + sq(delayReason||'')     + "'," +
+            "comments='"         + sq(comments||'')         + "'," +
+            "tracker_comments='" + sq(trackerComments||'')  + "' " +
+            "WHERE cr_number='"  + sq(crNumber)             + "' AND is_deleted=0", {}
+          );
+        } else {
+          throw insErr;
+        }
+      }
     }
+    return { ok: true };
+  } catch(err) {
+    logger.error('[TL] _saveManualCore failed', { crNumber, error: err.message });
+    return { ok: false, error: err.message || 'Save failed' };
+  }
+}
+
+// ── POST /task-list/save-manual — save 3 editable fields for one CR ──
+async function saveManual(req, res, next) {
+  try {
+    const { crNumber, delayReason, comments, trackerComments } = req.body;
+    const result = await _saveManualCore(crNumber, delayReason, comments, trackerComments, req.user.userId);
+    if (!result.ok) return res.status(422).json({ error: result.error });
     return res.json({ message: 'Saved' });
   } catch(err) { next(err); }
 }
 
-// ── POST /task-list/save-manual-bulk — save editable fields for many CRs
+// ── POST /task-list/save-manual-bulk — save editable fields for many CRs.
+// Reports which rows actually succeeded instead of a blanket "Saved" —
+// one bad row (e.g. missing crNumber) or a DB error no longer silently
+// swallows the rest of the batch's real outcome.
 async function saveManualBulk(req, res, next) {
   try {
     const rows = req.body.rows;
     if (!Array.isArray(rows)||!rows.length) return res.status(422).json({error:'rows required'});
+    let saved = 0;
+    const failed = [];
     for (const row of rows) {
-      req.body = row;
-      const mockRes = { json: function(){}, status: function(){ return this; } };
-      await saveManual({ ...req, body: row }, mockRes, function(e){ if(e) throw e; });
+      const result = await _saveManualCore(row.crNumber, row.delayReason, row.comments, row.trackerComments, req.user.userId);
+      if (result.ok) saved++;
+      else failed.push({ crNumber: row.crNumber || '(missing)', error: result.error });
     }
-    return res.json({ message: 'Saved', count: rows.length });
+    return res.json({ message: failed.length ? 'Saved with errors' : 'Saved', saved, failed });
   } catch(err) { next(err); }
 }
 
@@ -787,7 +883,8 @@ async function updateCemliFields(crNumber, cemli, smartSheet, process) {
 }
 
 module.exports = {
-  getTaskList, getLiveTaskList, canEdit, createTask, bulkUpsert, updateTask, deleteTask, bulkDelete,
+  getTaskList, getLiveTaskList, canEdit, requireTaskListEditor,
+  createTask, bulkUpsert, updateTask, deleteTask, bulkDelete,
   saveManual, saveManualBulk, updateCemliFields,
   createOnCRCreate, upsertFromSubTask, updatePhaseDate, updateOwner,
   ensureTaskListRow,

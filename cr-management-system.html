@@ -1151,7 +1151,6 @@ select.tl-cell {
           <div id="tl-bulk-bar">
             <span id="tl-bulk-count">0 selected</span>
             <button class="tl-bulk-btn" onclick="tlBulkExport()" style="background:#eff6ff;border-color:#3b82f6;color:#1d4ed8">&#11015; Export Selected</button>
-            <button class="tl-bulk-btn" id="tl-bulk-del-btn" onclick="tlBulkDelete()" style="background:#fff5f5;border-color:#fca5a5;color:#dc2626;display:none">&#128465; Delete Selected</button>
             <button class="tl-bulk-btn" onclick="tlDeselectAll()" style="background:var(--grey-50);border-color:var(--grey-300);color:var(--grey-600)">&#215; Deselect All</button>
           </div>
 
@@ -4168,11 +4167,33 @@ async function tlSaveAll() {
           trackerComments:r.trackerComments||''
         };
       }).filter(function(p){ return !!p.crNumber; });
-      if (payloads.length) await POST('/task-list/save-manual-bulk', { rows: payloads });
+      var skipped = dirty.length - payloads.length;
+      if (payloads.length) {
+        var result = await POST('/task-list/save-manual-bulk', { rows: payloads });
+        if (!result) {
+          // Request itself failed (network/server error) — api() already
+          // toasted the reason. Leave _tlPending as-is so these rows are
+          // still marked dirty for a retry, instead of claiming success.
+          return;
+        }
+        if (result.failed && result.failed.length) {
+          toast((result.saved||0)+' saved, '+result.failed.length+' failed ('+
+            result.failed.map(function(f){ return f.crNumber; }).join(', ')+')', true);
+        } else if (skipped > 0) {
+          toast(result.saved+' saved, '+skipped+' row(s) skipped (no CR number)', true);
+        } else {
+          toast('Comments saved', false, 'green');
+        }
+      } else if (skipped > 0) {
+        toast('Nothing saved — '+skipped+' row(s) had no CR number', true);
+      } else {
+        toast('Nothing to save', false);
+      }
+    } else {
+      toast('Nothing to save', false);
     }
     _tlPending.clear();
     tlRenderGrid();
-    toast('Comments saved', false, 'green');
   } finally {
     if (btn) { btn.disabled=false; btn.textContent='✓ Save All'; }
   }
@@ -4215,16 +4236,15 @@ async function renderTaskList() {
     currentUser._canEditTL = !!(perm && perm.canEdit);
   } catch(e) { currentUser._canEditTL = (currentUser.role === 'admin'); }
 
+  // All other columns are populated live from the CR and are read-only for
+  // everyone — only Delay Reason, Comments, and Tracker Comments (highlighted)
+  // are editable, and they save automatically shortly after you stop typing.
   var lbl = document.getElementById('tl-access-label');
-  if (lbl) lbl.textContent = currentUser._canEditTL
-    ? 'You can edit all fields. Green-highlighted rows are CRMS auto-populated.'
-    : 'Read-only view. You can edit Delay Reason, Comments, and Tracker Comments.';
+  if (lbl) lbl.textContent = 'Delay Reason, Comments, and Tracker Comments (highlighted) are editable and save automatically. All other fields come from the CR and are read-only.';
 
   // Show/hide editor-only buttons
   var saveBtn = document.getElementById('tl-btn-save');
-  var delBtn  = document.getElementById('tl-bulk-del-btn');
   if (saveBtn) saveBtn.style.display = currentUser._canEditTL ? '' : 'none';
-  if (delBtn)  delBtn.style.display  = currentUser._canEditTL ? '' : 'none';
 
   // Always force fresh data from DB when navigating to Task List
   _tlRows = null;
@@ -4325,21 +4345,26 @@ function tlRenderGrid() {
         '<input type="checkbox" class="tl-chk tl-row-chk" '+(isSel?'checked':'')+' onchange="tlToggleRow(this,'+r._id+')" />'+
       '</td>'+
       '<td style="text-align:center;padding:4px;font-size:11px;color:var(--grey-400)">'+(idx+1)+'</td>'+
-      '<td>'+inp('reportedOn',  r.reportedOn,  !isEditor)+'</td>'+
-      '<td>'+inp('requester',   r.requester,   !isEditor)+'</td>'+
-      '<td>'+inp('cemli',       r.cemli,       !isEditor)+'</td>'+
-      '<td>'+inp('serviceNowId',r.serviceNowId,!isEditor)+'</td>'+
-      '<td>'+inp('ticketNo',    r.ticketNo,    !isEditor)+'</td>'+
-      '<td>'+inp('smartSheet',  r.smartSheet,  !isEditor)+'</td>'+
-      '<td>'+sel('project',     TL_PROJECT_LOV, r.project, !isEditor)+'</td>'+
-      '<td>'+sel('module',      TL_MODULE_LOV,  r.module,  !isEditor)+'</td>'+
-      '<td>'+inp('process',     r.process,     !isEditor)+'</td>'+
-      '<td style="min-width:140px">'+inp('taskTitle',r.taskTitle,!isEditor)+
+      // Note: these columns are all computed live from the CR (see
+      // getLiveTaskList server-side) — editing them here was never actually
+      // persisted by Save All/Save Row (those only send delayReason/comments/
+      // trackerComments), so they're rendered read-only rather than silently
+      // discarding edits. Only the 3 highlighted fields below are real.
+      '<td>'+inp('reportedOn',  r.reportedOn,  true)+'</td>'+
+      '<td>'+inp('requester',   r.requester,   true)+'</td>'+
+      '<td>'+inp('cemli',       r.cemli,       true)+'</td>'+
+      '<td>'+inp('serviceNowId',r.serviceNowId,true)+'</td>'+
+      '<td>'+inp('ticketNo',    r.ticketNo,    true)+'</td>'+
+      '<td>'+inp('smartSheet',  r.smartSheet,  true)+'</td>'+
+      '<td>'+sel('project',     TL_PROJECT_LOV, r.project, true)+'</td>'+
+      '<td>'+sel('module',      TL_MODULE_LOV,  r.module,  true)+'</td>'+
+      '<td>'+inp('process',     r.process,     true)+'</td>'+
+      '<td style="min-width:140px">'+inp('taskTitle',r.taskTitle,true)+
         (r._autoPopulated?'<span class="tl-auto-badge">CR</span>':'')+'</td>'+
       '<td><input class="tl-cell" value="'+(r.owner||'').replace(/"/g,'&quot;')+'" readonly style="color:#1B5E20;font-weight:600" /></td>'+
-      '<td class="'+sCls+'">'+sel('status', TL_STATUS_LOV, r.status, !isEditor)+'</td>'+
-      '<td>'+sel('stage',       TL_STAGE_LOV, r.stage, !isEditor)+'</td>'+
-      '<td>'+inp('pendingWith', r.pendingWith, !isEditor)+'</td>'+
+      '<td class="'+sCls+'">'+sel('status', TL_STATUS_LOV, r.status, true)+'</td>'+
+      '<td>'+sel('stage',       TL_STAGE_LOV, r.stage, true)+'</td>'+
+      '<td>'+inp('pendingWith', r.pendingWith, true)+'</td>'+
       (function(){
         var ag=null;
         var endStr=r.tftEnd||r.devEnd||r.md50End;
@@ -4354,9 +4379,10 @@ function tlRenderGrid() {
         var c=ag>30?'color:#dc2626;font-weight:700':ag>14?'color:#d97706;font-weight:600':'color:#16a34a';
         return'<td style="'+c+';white-space:nowrap">'+(ag>0?'+':'')+ag+' days</td>';
       })()+
-      // ALWAYS EDITABLE — highlighted amber
-      '<td>'+inp('delayReason',     r.delayReason||'',     false)+'</td>'+
-      '<td>'+inp('comments',        r.comments||'',        false)+'</td>'+
+      // ALWAYS EDITABLE — highlighted amber. Title shows when the manual
+      // notes were last saved, so stale/never-saved notes are visible at a glance.
+      '<td title="'+(r.notesUpdatedAt?('Notes last updated: '+fmtDate(r.notesUpdatedAt)):'No manual notes saved yet')+'">'+inp('delayReason', r.delayReason||'', false)+'</td>'+
+      '<td title="'+(r.notesUpdatedAt?('Notes last updated: '+fmtDate(r.notesUpdatedAt)):'No manual notes saved yet')+'">'+inp('comments', r.comments||'', false)+'</td>'+
       // Phase date columns — always read-only (set by system)
       dtCell(r.rdApprovalDt)+
       dtCell(r.md50St)+dtCell(r.md50End)+
@@ -4368,10 +4394,9 @@ function tlRenderGrid() {
       dtCell(r.approved1On)+dtCell(r.approved2On)+dtCell(r.approved3On)+
       dtCell(r.deployedSamil)+dtCell(r.deployedMswil)+
       // ALWAYS EDITABLE
-      '<td>'+inp('trackerComments', r.trackerComments||'', false)+'</td>'+
+      '<td title="'+(r.notesUpdatedAt?('Notes last updated: '+fmtDate(r.notesUpdatedAt)):'No manual notes saved yet')+'">'+inp('trackerComments', r.trackerComments||'', false)+'</td>'+
       '<td><div class="tl-row-actions">'+
         '<button class="tl-btn tl-btn-save" onclick="tlSaveRow('+r._id+')" title="Save">&#10003;</button>'+
-        (isEditor ? '<button class="tl-btn tl-btn-del" onclick="tlDeleteRow('+r._id+')" title="Delete">&#10005;</button>' : '')+
       '</div></td>'+
       '</tr>';
     // Inject the real row id into @@ID@@ placeholders
@@ -4431,31 +4456,16 @@ function tlUpdateBulkBar() {
 }
 
 // ── Bulk actions ──────────────────────────────────────────────────────
-async function tlBulkDelete() {
-  if (!tlCanEdit() || !_tlSelected.size) return;
-  var n = _tlSelected.size;
-  showConfirmModal('Delete Rows', '<p>Delete '+n+' row(s)? This cannot be undone.</p>', 'Delete', '#dc2626', async function() {
-    var ids = (_tlRows||[]).filter(function(r){ return _tlSelected.has(r._id)&&r.taskListId; }).map(function(r){ return r.taskListId; });
-    if (ids.length) try { await api('DELETE','/task-list/bulk',{ids:ids}); } catch(e){}
-    _tlRows = (_tlRows||[]).filter(function(r){ return !_tlSelected.has(r._id); });
-    _tlSelected.clear(); tlRenderGrid();
-  });
-}
 function tlBulkExport() {
   if (!_tlSelected.size) { toast('Select rows first', true); return; }
   tlExportRows((_tlRows||[]).filter(function(r){ return _tlSelected.has(r._id); }),
     'task_list_selected_'+new Date().toISOString().slice(0,10)+'.csv');
 }
 
-async function tlDeleteRow(id) {
-  if (!tlCanEdit()) return;
-  showConfirmModal('Delete Row', '<p>Delete this row? This cannot be undone.</p>', 'Delete', '#dc2626', async function() {
-    var row = (_tlRows||[]).find(function(r){ return r._id===id; });
-    if (row&&row.taskListId) try { await api('DELETE','/task-list/'+row.taskListId,{}); } catch(e){}
-    _tlRows = (_tlRows||[]).filter(function(r){ return r._id!==id; });
-    _tlSelected.delete(id); tlRenderGrid();
-  });
-}
+// Note: there is no "delete row" here on purpose. Each row is a live view
+// of one CR (from crms_releases) — there's no independent row to delete;
+// it would just reappear on the next refresh since the CR itself still
+// exists. If a CR shouldn't be tracked, delete/cancel the CR itself.
 
 // ── Export ────────────────────────────────────────────────────────────
 function tlExportRows(rows, fname) {
