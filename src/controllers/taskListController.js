@@ -269,7 +269,7 @@ async function upsertFromSubTask(data) {
 // ══════════════════════════════════════════════════════════════════════
 // updatePhaseDate — called by writeStateChange and closePhaseTask
 // ══════════════════════════════════════════════════════════════════════
-async function updatePhaseDate(crNumber, toState, approverNameOrUid) {
+async function updatePhaseDate(crNumber, toState, approverNameOrUid, fromState) {
   try {
     const today = new Date().toLocaleDateString('en-IN');
     const fields = {};
@@ -285,25 +285,31 @@ async function updatePhaseDate(crNumber, toState, approverNameOrUid) {
       return;
     }
 
-    // State → date column + stage
+    // State → date column + stage.
+    // NOTE: rdApprovalDt/md50AppOn/approvedNOn are APPROVAL-COMPLETION dates,
+    // not submission dates — they're set on the transition INTO the state
+    // reached only once approval is fully done (releaseController.js's
+    // AFTER_APPROVAL), not on entry into the 'Awaiting Approval'/'Approval L*'
+    // states, which just mean "submitted, still pending".
     const stateMap = {
       'RD Phase':                 { stage: 'RD PENDING' },
-      'RD Awaiting Approval L1':  { rdApprovalDt: today, stage: 'RD APPROVAL' },
-      'RD Awaiting Approval L2':  { rdApprovalDt: today, stage: 'RD APPROVAL' },
-      'RD Awaiting Approval L3':  { rdApprovalDt: today, stage: 'RD APPROVAL' },
-      'RD Approval L1':           { rdApprovalDt: today, stage: 'RD APPROVAL' },
-      'RD Approval L2':           { rdApprovalDt: today, stage: 'RD APPROVAL' },
-      'RD Approval L3':           { rdApprovalDt: today, stage: 'RD APPROVAL' },
-      'FSD Phase':                { md50St: today, stage: 'MD50 CREATION' },
+      'RD Awaiting Approval L1':  { stage: 'RD APPROVAL' },
+      'RD Awaiting Approval L2':  { stage: 'RD APPROVAL' },
+      'RD Awaiting Approval L3':  { stage: 'RD APPROVAL' },
+      // RD approval completed here — CR only reaches FSD Phase once fully approved.
+      'FSD Phase':                { md50St: today, stage: 'MD50 CREATION', rdApprovalDt: today },
       'FSD Awaiting Approval L1': { md50End: today, stage: 'MD50 APPROVAL' },
       'FSD Awaiting Approval L2': { md50End: today, stage: 'MD50 APPROVAL' },
       'FSD Awaiting Approval L3': { md50End: today, stage: 'MD50 APPROVAL' },
+      // FSD/MD50 approval completed here — CR only reaches Development Phase
+      // once fully approved (md50AppOn/md50AppBy set separately below, since
+      // md50AppBy needs the approver lookup).
       'Development Phase':        { devSt:   today, stage: 'DEVELOPMENT QUEUE' },
       'Testing Phase':            { tftSt:   today, stage: 'TFT TESTING' },
       'UAT Phase':                { uatClosedOn: today, stage: 'UAT' },
-      'Deployment Approval L1':   { approved1On: today, stage: 'MOVEMENT APPROVAL' },
-      'Deployment Approval L2':   { approved2On: today, stage: 'MOVEMENT APPROVAL' },
-      'Deployment Approval L3':   { approved3On: today, stage: 'MOVEMENT APPROVAL' },
+      'Deployment Approval L1':   { stage: 'MOVEMENT APPROVAL' },
+      'Deployment Approval L2':   { stage: 'MOVEMENT APPROVAL' },
+      'Deployment Approval L3':   { stage: 'MOVEMENT APPROVAL' },
       'Deployment Phase':         { deployedSamil: today, stage: 'DEPLOYMENT' },
       'DBA Deployment Phase':     { deployedSamil: today, stage: 'DBA DEPLOYMENT' },
       'Observation Phase':        { stage: 'UNDER OBSERVATION' },
@@ -319,8 +325,8 @@ async function updatePhaseDate(crNumber, toState, approverNameOrUid) {
 
     Object.assign(fields, mapping);
 
-    // FSD Awaiting → look up approver name
-    if (toState.startsWith('FSD Awaiting') || toState.startsWith('FSD Approval')) {
+    // FSD approval completed → look up approver name
+    if (toState === 'Development Phase') {
       fields.md50AppOn = today;
       if (approverNameOrUid) {
         if (!isNaN(Number(approverNameOrUid))) {
@@ -333,6 +339,13 @@ async function updatePhaseDate(crNumber, toState, approverNameOrUid) {
         }
       }
     }
+
+    // Deployment level N approval completed = the transition OUT of
+    // 'Deployment Approval L{n}' (needs fromState, unlike the other date
+    // fields above which key off toState alone).
+    if (fromState === 'Deployment Approval L1') fields.approved1On = today;
+    if (fromState === 'Deployment Approval L2') fields.approved2On = today;
+    if (fromState === 'Deployment Approval L3') fields.approved3On = today;
 
     await ensureTaskListRow(crNumber, fields);
   } catch(e) {
@@ -568,7 +581,7 @@ async function getLiveTaskList(req, res, next) {
 
     // ── 3. Load ALL history for these releases in one query ───────────
     const history = await db.query(
-      "SELECT h.release_id,h.to_state,h.changed_at,u.full_name AS changed_by " +
+      "SELECT h.release_id,h.from_state,h.to_state,h.changed_at,u.full_name AS changed_by " +
       "FROM crms_release_history h " +
       "JOIN crms_users u ON u.user_id = h.changed_by " +
       "WHERE h.release_id IN (" + idList + ") " +
@@ -614,11 +627,14 @@ async function getLiveTaskList(req, res, next) {
     }
 
     // State → Stage LOV
+    // NOTE: 'RD Approval L1'/'RD Approval L2'/'RD Approval L3' are not real
+    // CR states (releaseController.js only ever sets 'RD Awaiting Approval
+    // L{n}' while RD approval is pending — see AFTER_APPROVAL/approvalController.js)
+    // — removed the dead entries that used to exist here.
     var stageMap = {
       'RD Phase':'RD PENDING',
-      'RD Awaiting Approval L1':'RD DISCUSSION','RD Awaiting Approval L2':'RD DISCUSSION',
-      'RD Awaiting Approval L3':'RD DISCUSSION',
-      'RD Approval L1':'RD DISCUSSION','RD Approval L2':'RD DISCUSSION',
+      'RD Awaiting Approval L1':'RD APPROVAL','RD Awaiting Approval L2':'RD APPROVAL',
+      'RD Awaiting Approval L3':'RD APPROVAL',
       'FSD Phase':'MD50 CREATION',
       'FSD Awaiting Approval L1':'MD50 APPROVAL','FSD Awaiting Approval L2':'MD50 APPROVAL',
       'FSD Awaiting Approval L3':'MD50 APPROVAL',
@@ -639,7 +655,6 @@ async function getLiveTaskList(req, res, next) {
     // oldest still-open sub-task across any past phase.
     var stateToPhase = {
       'RD Phase':'RD','RD Awaiting Approval L1':'RD','RD Awaiting Approval L2':'RD','RD Awaiting Approval L3':'RD',
-      'RD Approval L1':'RD','RD Approval L2':'RD','RD Approval L3':'RD',
       'FSD Phase':'FSD','FSD Awaiting Approval L1':'FSD','FSD Awaiting Approval L2':'FSD','FSD Awaiting Approval L3':'FSD',
       'Development Phase':'DEV','Testing Phase':'TESTING','UAT Phase':'UAT',
       'Deployment Approval L1':'DEPLOYMENT','Deployment Approval L2':'DEPLOYMENT','Deployment Approval L3':'DEPLOYMENT',
@@ -685,18 +700,20 @@ async function getLiveTaskList(req, res, next) {
       var uat  = pt('UAT');
       var dep  = pt('DEPLOYMENT');
 
-      // RD Approval date = when first RD Awaiting/Approval state was reached
+      // RD Approval date = when RD approval actually COMPLETED, i.e. the CR
+      // moved to 'FSD Phase' (releaseController.js: AFTER_APPROVAL.RD).
+      // Previously this fired on 'RD Awaiting Approval L*' — the SUBMISSION
+      // event — so the date showed up before anyone had actually approved it.
       var rdApprDt = '';
-      var rdHist = rHist.find(function(h){
-        return h.TO_STATE && (h.TO_STATE.startsWith('RD Awaiting') || h.TO_STATE.startsWith('RD Approval'));
-      });
+      var rdHist = rHist.find(function(h){ return h.TO_STATE === 'FSD Phase'; });
       if (rdHist) rdApprDt = fmtDate(rdHist.CHANGED_AT);
 
-      // MD50 App By and On = approver when FSD Awaiting was reached
+      // MD50 App By/On = when FSD/MD50 approval actually COMPLETED, i.e. the
+      // CR moved to 'Development Phase' (AFTER_APPROVAL.FSD). Same fix as
+      // above — was firing on submission ('FSD Awaiting Approval L*') and
+      // attributing it to whoever submitted, not whoever approved.
       var md50AppBy = '', md50AppOn = '';
-      var fsdApprHist = rHist.find(function(h){
-        return h.TO_STATE && (h.TO_STATE.startsWith('FSD Awaiting') || h.TO_STATE.startsWith('FSD Approval'));
-      });
+      var fsdApprHist = rHist.find(function(h){ return h.TO_STATE === 'Development Phase'; });
       if (fsdApprHist) {
         md50AppBy = fsdApprHist.CHANGED_BY || '';
         md50AppOn = fmtDate(fsdApprHist.CHANGED_AT);
@@ -710,10 +727,18 @@ async function getLiveTaskList(req, res, next) {
       var closedHist = rHist.find(function(h){ return h.TO_STATE === 'Closed'; });
       var deployedMswil = closedHist ? fmtDate(closedHist.CHANGED_AT) : '';
 
-      // 1st/2nd/3rd Approved On = Deployment Approval L1/L2/L3
-      var dep1 = rHist.find(function(h){ return h.TO_STATE === 'Deployment Approval L1'; });
-      var dep2 = rHist.find(function(h){ return h.TO_STATE === 'Deployment Approval L2'; });
-      var dep3 = rHist.find(function(h){ return h.TO_STATE === 'Deployment Approval L3'; });
+      // 1st/2nd/3rd Approved On = when that Deployment level actually
+      // finished — the transition OUT of 'Deployment Approval L{n}' — not
+      // when the CR merely entered that level and started waiting on it.
+      // Deployment's level states (unlike RD/FSD) don't have a separate
+      // "Awaiting" name, so the old TO_STATE match was catching the
+      // submission/entry event, not the completion. A level that a
+      // module's flow never actually uses (e.g. a 1-level flow never
+      // producing a 'Deployment Approval L2' row) just stays blank, which
+      // is correct — this is robust to however many levels are configured.
+      var dep1 = rHist.find(function(h){ return h.FROM_STATE === 'Deployment Approval L1'; });
+      var dep2 = rHist.find(function(h){ return h.FROM_STATE === 'Deployment Approval L2'; });
+      var dep3 = rHist.find(function(h){ return h.FROM_STATE === 'Deployment Approval L3'; });
 
       // CEMLI, SmartSheet, Process:
       // Priority 1 — saved on CR detail screen (crms_releases)

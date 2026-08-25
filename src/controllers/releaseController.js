@@ -1362,7 +1362,7 @@ async function writeStateChange(rid,relNum,fromState,toState,uid,assignedUserId)
 
   // ── Update Task List phase dates (fire-and-forget) ──────────────────
   setImmediate(function() {
-    taskListCtrl.updatePhaseDate(relNum, toState, null).catch(function(){});
+    taskListCtrl.updatePhaseDate(relNum, toState, null, fromState).catch(function(){});
   });
 
   // ── Push to ServiceNow (fire-and-forget, never blocks CRMS) ─────────
