@@ -2130,7 +2130,7 @@ async function quickApprove(releaseId) {
       });
       if (!result) return;
       toast(result.message, false, 'green');
-      renderDashboard();
+      await refreshActiveViews();
     });
 }
 
@@ -2150,7 +2150,7 @@ async function quickReject(releaseId) {
       });
       if (!result) return;
       toast(result.message, false, 'green');
-      renderDashboard();
+      await refreshActiveViews();
     });
 }
 
@@ -2490,6 +2490,43 @@ async function exportAudit() {
 }
 
 // ══════════════════════════════════════════════════════════════════════
+// UNIFIED REFRESH — call after any action that changes CR/task/approval
+// state, so every view depending on that data catches up together instead
+// of each handler refreshing a different, incomplete subset (which is how
+// "approve from the list updates the badge but not the dashboard, approve
+// from the modal updates the dashboard but not the approvals list" bugs
+// happen). Only refreshes whichever of these views is actually the one
+// the user is currently looking at — cheap, and avoids clobbering
+// filters/scroll position on tabs nobody's viewing.
+// ══════════════════════════════════════════════════════════════════════
+function _isViewActive(viewId) {
+  var el = document.getElementById(viewId);
+  return !!(el && el.classList.contains('active'));
+}
+
+async function refreshActiveViews() {
+  var jobs = [];
+  // Deferred through Promise.resolve().then(fn) rather than calling fn()
+  // directly — that way a synchronous throw inside any of these becomes a
+  // rejected promise instead of escaping refreshActiveViews() entirely and
+  // skipping every job queued after it.
+  function safe(fn) { jobs.push(Promise.resolve().then(fn).catch(function(){})); }
+
+  if (_isViewActive('view-dashboard'))    safe(renderDashboard);
+  if (_isViewActive('view-releases'))     safe(renderMyReleases);
+  if (_isViewActive('view-all-releases')) safe(renderAllReleases);
+  if (_isViewActive('view-approvals'))    safe(renderApprovalsList);
+  if (_isViewActive('view-tasklist')) {
+    // Don't clobber a row the user is mid-editing — it'll catch up next
+    // time they navigate away and back, same as before this fix.
+    if (!_tlPending || !_tlPending.size) safe(function() { _tlRows = null; return renderTaskList(); });
+  }
+  safe(checkApproverStatus);
+  safe(checkReviewerStatus);
+  await Promise.all(jobs);
+}
+
+// ══════════════════════════════════════════════════════════════════════
 // NOTIFICATIONS
 // ══════════════════════════════════════════════════════════════════════
 async function _notifTick() {
@@ -2498,7 +2535,10 @@ async function _notifTick() {
     return;
   }
   await renderNotifications();
-  // If a detail modal is open, silently refresh it so state changes are visible in real-time
+  // If a detail modal is open, silently refresh just its state badge/phase
+  // bar (not a full re-render — the user could be mid-edit in a field or
+  // mid-comment inside that modal, and blowing it away every 30s would be
+  // actively hostile).
   if (activeDetailId && document.getElementById('detail-modal').classList.contains('open')) {
     try {
       var fresh = await GET('/releases/' + activeDetailId);
@@ -2510,6 +2550,10 @@ async function _notifTick() {
       }
     } catch(e) {}
   }
+  // Also catch up whichever LIST view is currently open, so a teammate's
+  // approve/reject/advance/close elsewhere shows up here without a manual
+  // refresh — this is the only place that happens today.
+  await refreshActiveViews();
 }
 
 function _notifStartInterval() {
@@ -2916,8 +2960,7 @@ async function _doCreateImpl() {
 
   closeModal('create-modal');
   showSuccessPopup(result.releaseNumber, result.releaseId);
-  renderDashboard();
-  renderMyReleases();
+  await refreshActiveViews();
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -3226,7 +3269,7 @@ async function _doAdvanceState(force, confirmed) {
     toast('State \u2192 ' + result.toState, false, 'green');
   }
   await openDetail(activeDetailId);
-  renderDashboard();
+  await refreshActiveViews();
 }
 
 function renderHistory(history) {
@@ -4664,8 +4707,8 @@ async function saveCrOwner() {
     var result = await PATCH('/releases/' + activeDetailId + '/cr-owner', { crOwnerUserId: parseInt(ownerId) });
     if (!result) return;
     toast('CR Owner set: ' + result.crOwnerName, false, 'green');
-    _tlRows = null; // update task list with new owner
     await openDetail(activeDetailId);
+    await refreshActiveViews();
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Set Owner'; }
   }
@@ -5030,7 +5073,7 @@ function openSendBackModal(release) {
     var result = await PATCH('/releases/'+activeDetailId+'/send-back', { reason: reason });
     if (!result) return;
     showInfoModal('Sent Back','CR sent back to <strong>'+result.toState+'</strong>.',false);
-    await openDetail(activeDetailId); renderDashboard();
+    await openDetail(activeDetailId); await refreshActiveViews();
   };
   // Ensure save button is active
   var _sb = document.getElementById('input-modal-save');
@@ -5047,7 +5090,7 @@ async function doUnhold() {
     var result = await PATCH('/releases/'+activeDetailId+'/unhold', {});
     if (!result) return;
     toast(r.releaseNumber+' resumed', false, 'green');
-    await openDetail(activeDetailId); renderDashboard();
+    await openDetail(activeDetailId); await refreshActiveViews();
   });
 }
 
@@ -5064,8 +5107,7 @@ async function closeCR() {
       var result = await PATCH('/releases/'+activeDetailId+'/close-cr', {});
       if (!result) return;
       showInfoModal('CR Closed', 'CR moved to <strong>Closed</strong>.', false, 'green');
-      _tlRows = null;
-      await openDetail(activeDetailId); renderDashboard();
+      await openDetail(activeDetailId); await refreshActiveViews();
     }
   );
 }
@@ -5887,8 +5929,8 @@ async function doAdvance(body) {
   else if(result.toState==='Cancelled'){showInfoModal('CR Cancelled','CR has been cancelled.',false);}
   else if(result.toState==='On Hold'){showInfoModal('CR On Hold','CR is now on hold.',false);}
   else{showInfoModal('State Updated','CR moved to: <strong>'+result.toState+'</strong>',false,'green');}
-  _tlRows = null; // invalidate task list on any CR state change
-  await openDetail(activeDetailId);renderDashboard();
+  await openDetail(activeDetailId);
+  await refreshActiveViews(); // also invalidates/refreshes task list if it's the active tab
 }
 
 
@@ -6174,6 +6216,7 @@ async function resetUserPassword(userId, name) {
       var res = await api('PATCH', '/auth/crms-user/' + userId, { resetPassword: true });
       if (!res) return;
       toast('✅ Password reset to pass123 for ' + name, false, 'green');
+      renderOracleUserMgmt();
     }
   );
 }
@@ -6391,7 +6434,7 @@ async function submitToFSD() {
   if (!res) return;
   toast(res.message, false, 'green');
   await openDetail(activeDetailId);
-  renderDashboard();
+  await refreshActiveViews();
 }
 
 
@@ -7029,7 +7072,7 @@ async function editModuleGroups(moduleId, moduleName) {
   document.getElementById('input-modal-save').onclick = async () => {
     const ids = [...document.getElementById('im-mod-groups').selectedOptions].map(o => parseInt(o.value));
     const r = await PUT('/modules/' + moduleId + '/groups', { groupIds: ids });
-    if (r === null || r) { closeModal('input-modal'); renderModules(); toast('Groups updated', false, 'green'); }
+    if (r === null || r) { closeModal('input-modal'); await loadReferenceData(); renderModules(); toast('Groups updated', false, 'green'); }
   };
   openModal('input-modal');
 }
@@ -7061,7 +7104,7 @@ async function editModuleUsers(moduleId, moduleName) {
       return { userId: u.userId, isRequester: reqEl?.checked||false, isApprover: appEl?.checked||false };
     }).filter(u => u.isRequester || u.isApprover);
     const r = await PUT('/modules/' + moduleId + '/users', { users });
-    if (r === null || r) { closeModal('input-modal'); renderModules(); toast('Users updated', false, 'green'); }
+    if (r === null || r) { closeModal('input-modal'); await loadReferenceData(); renderModules(); toast('Users updated', false, 'green'); }
   };
   openModal('input-modal');
 }
@@ -7728,13 +7771,8 @@ async function promptApproveReject(releaseId, action, opts) {
     var rnum = opts.releaseNumber || '';
     toast(result.message || (isApprove ? (rnum ? '✅ '+rnum+' approved' : 'Approved!') : (rnum ? '↩ '+rnum+' rejected' : 'Rejected')), false, isApprove ? 'green' : '');
     closeModal('input-modal');
-    if (opts.fromList) {
-      renderApprovalsList();
-      checkApproverStatus();
-    } else {
-      await openDetail(releaseId);
-      renderDashboard();
-    }
+    if (!opts.fromList) await openDetail(releaseId);
+    await refreshActiveViews();
   };
   openModal('input-modal');
 }
@@ -8570,6 +8608,7 @@ async function closeSubTask(taskId) {
     document.getElementById('dm-state-badge').innerHTML = stateBadge(r.state);
     // Re-open detail panel for the closed task
     if (_activeTaskId) setTimeout(function(){ openSubTaskDetail(taskId); }, 100);
+    await refreshActiveViews();
   });
 }
 
