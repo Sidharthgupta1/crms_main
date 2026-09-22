@@ -92,4 +92,149 @@ async function getSubtaskAssignees(req, res, next) {
   } catch(err) { next(err); }
 }
 
-module.exports = { getSummary, getSubtaskAssignees };
+// GET /analytics/resource-report
+// Resource-level workload visibility for Management: who is actually
+// HOLDING sub-tasks (assigned_to on crms_release_tasks) — deliberately not
+// who raised the CR (requested_by), since a CR's requester and the people
+// doing the work are usually different people. Returns, per resource:
+//   - currentTasks: open sub-tasks, with Task Ageing (days since the
+//     sub-task was created) and Phase Ageing (days since the parent CR's
+//     most recent state change — same basis as Task List's Phase Ageing)
+//   - completedLastMonth: sub-tasks closed in the last 30 days, with days-
+//     to-close and a Default/Not-Default flag
+//   - allTimeCompleted: total closed sub-tasks ever, for context
+async function getResourceReport(req, res, next) {
+  try {
+    // Aging past this many days = "Default" (breached), at or under = "Non-Default".
+    const DEFAULT_THRESHOLD_DAYS = 15;
+    const moduleId = req.query.moduleId ? num(req.query.moduleId) : null;
+    const company  = req.query.company ? safe(req.query.company) : null;
+    const extraWhere = (moduleId ? " AND r.module_id="+moduleId : '') + (company ? " AND r.company='"+company+"'" : '');
+
+    const [currentRows, completedRows, allTimeRows] = await Promise.all([
+      db.query(
+        "SELECT rt.task_id,rt.task_number,rt.phase_code,rt.state,rt.created_at,rt.planned_end_date,"+
+        "rt.assigned_to,u.full_name AS resource_name,"+
+        "r.release_id,r.release_number,r.title AS release_title,r.company,m.module_name,"+
+        "(SELECT MAX(h.changed_at) FROM crms_release_history h WHERE h.release_id=r.release_id) AS phase_started_at "+
+        "FROM crms_release_tasks rt "+
+        "JOIN crms_users u ON u.user_id=rt.assigned_to "+
+        "JOIN crms_releases r ON r.release_id=rt.release_id AND r.is_deleted=0 "+
+        "LEFT JOIN crms_modules m ON m.module_id=r.module_id "+
+        "WHERE rt.assigned_to IS NOT NULL AND rt.state<>'Closed'"+extraWhere+
+        " ORDER BY rt.created_at DESC", {}
+      ),
+      db.query(
+        "SELECT rt.task_id,rt.task_number,rt.phase_code,rt.created_at,rt.closed_at,rt.planned_end_date,"+
+        "rt.assigned_to,u.full_name AS resource_name,"+
+        "r.release_id,r.release_number,r.title AS release_title,r.company,m.module_name "+
+        "FROM crms_release_tasks rt "+
+        "JOIN crms_users u ON u.user_id=rt.assigned_to "+
+        "JOIN crms_releases r ON r.release_id=rt.release_id AND r.is_deleted=0 "+
+        "LEFT JOIN crms_modules m ON m.module_id=r.module_id "+
+        "WHERE rt.assigned_to IS NOT NULL AND rt.state='Closed' AND rt.closed_at>=SYSDATE-30"+extraWhere+
+        " ORDER BY rt.closed_at DESC", {}
+      ),
+      // Full all-time-completed list (not just a count) so the report can
+      // list/export/link every closed sub-task ever, per resource.
+      db.query(
+        "SELECT rt.task_id,rt.task_number,rt.phase_code,rt.created_at,rt.closed_at,rt.planned_end_date,"+
+        "rt.assigned_to,u.full_name AS resource_name,"+
+        "r.release_id,r.release_number,r.title AS release_title,r.company,m.module_name "+
+        "FROM crms_release_tasks rt "+
+        "JOIN crms_users u ON u.user_id=rt.assigned_to "+
+        "JOIN crms_releases r ON r.release_id=rt.release_id AND r.is_deleted=0 "+
+        "LEFT JOIN crms_modules m ON m.module_id=r.module_id "+
+        "WHERE rt.assigned_to IS NOT NULL AND rt.state='Closed'"+extraWhere+
+        " ORDER BY rt.closed_at DESC", {}
+      ),
+    ]);
+
+    function dayDiff(a, b) { return Math.floor((new Date(a) - new Date(b)) / 86400000); }
+
+    // Ageing-matrix bucket: how many days a task is overdue against its
+    // Planned End Date. <=0 is on-time/not-yet-due; the ranges above that
+    // are the "0 / 1 to 3 / 4 to 20 / >20" buckets from the Resource Report
+    // matrix. A task with no Planned End Date set can't be overdue, so it
+    // falls into the "0" bucket.
+    function ageingBucket(delayDays) {
+      if (delayDays === null || delayDays === undefined || delayDays <= 0) return '0';
+      if (delayDays <= 3)  return '1to3';
+      if (delayDays <= 20) return '4to20';
+      return 'gt20';
+    }
+
+    const currentTasks = currentRows.map(function(r){
+      const reportedAt = r.CREATED_AT;
+      const phaseStartedAt = r.PHASE_STARTED_AT || reportedAt;
+      const plannedEndDate = r.PLANNED_END_DATE || null;
+      const openDelayDays = plannedEndDate ? dayDiff(new Date(), plannedEndDate) : null;
+      return {
+        taskId: r.TASK_ID, taskNumber: r.TASK_NUMBER, phaseCode: r.PHASE_CODE, state: r.STATE,
+        resourceUserId: num(r.ASSIGNED_TO), resourceName: r.RESOURCE_NAME,
+        releaseId: r.RELEASE_ID, releaseNumber: r.RELEASE_NUMBER, releaseTitle: r.RELEASE_TITLE,
+        company: r.COMPANY||'', moduleName: r.MODULE_NAME||'',
+        reportedAt: reportedAt,
+        taskAgeingDays: dayDiff(new Date(), reportedAt),
+        phaseAgeingDays: dayDiff(new Date(), phaseStartedAt),
+        plannedEndDate: plannedEndDate,
+        openAgeingBucket: ageingBucket(openDelayDays),
+      };
+    });
+
+    function mapCompleted(r) {
+      const daysToClose = dayDiff(r.CLOSED_AT, r.CREATED_AT);
+      const plannedEndDate = r.PLANNED_END_DATE || null;
+      const closedDelayDays = plannedEndDate ? dayDiff(r.CLOSED_AT, plannedEndDate) : null;
+      return {
+        taskId: r.TASK_ID, taskNumber: r.TASK_NUMBER, phaseCode: r.PHASE_CODE,
+        resourceUserId: num(r.ASSIGNED_TO), resourceName: r.RESOURCE_NAME,
+        releaseId: r.RELEASE_ID, releaseNumber: r.RELEASE_NUMBER, releaseTitle: r.RELEASE_TITLE,
+        company: r.COMPANY||'', moduleName: r.MODULE_NAME||'',
+        reportedAt: r.CREATED_AT, closedAt: r.CLOSED_AT,
+        daysToClose: daysToClose,
+        isDefault: daysToClose > DEFAULT_THRESHOLD_DAYS,
+        plannedEndDate: plannedEndDate,
+        closedAgeingBucket: ageingBucket(closedDelayDays),
+      };
+    }
+    const completedLastMonth = completedRows.map(mapCompleted);
+    const allTimeCompleted   = allTimeRows.map(mapCompleted);
+
+    const byResource = {};
+    function ensureResource(uid, name) {
+      if (!byResource[uid]) byResource[uid] = {
+        userId: uid, name: name, currentCount: 0,
+        completedLastMonthCount: 0, defaultCount: 0,
+        allTimeCompleted: 0,
+        openAgeing0: 0, openAgeing1to3: 0, openAgeing4to20: 0, openAgeingGt20: 0,
+        closedAgeing0: 0, closedAgeing1to3: 0, closedAgeing4to20: 0, closedAgeingGt20: 0,
+      };
+      return byResource[uid];
+    }
+    var OPEN_BUCKET_FIELD   = { '0':'openAgeing0',   '1to3':'openAgeing1to3',   '4to20':'openAgeing4to20',   gt20:'openAgeingGt20' };
+    var CLOSED_BUCKET_FIELD = { '0':'closedAgeing0', '1to3':'closedAgeing1to3', '4to20':'closedAgeing4to20', gt20:'closedAgeingGt20' };
+    currentTasks.forEach(function(t){
+      var s = ensureResource(t.resourceUserId, t.resourceName);
+      s.currentCount++;
+      s[OPEN_BUCKET_FIELD[t.openAgeingBucket]]++;
+    });
+    completedLastMonth.forEach(function(t){
+      var s = ensureResource(t.resourceUserId, t.resourceName);
+      s.completedLastMonthCount++;
+      if (t.isDefault) s.defaultCount++;
+      s[CLOSED_BUCKET_FIELD[t.closedAgeingBucket]]++;
+    });
+    allTimeCompleted.forEach(function(t){ ensureResource(t.resourceUserId, t.resourceName).allTimeCompleted++; });
+
+    return res.json({
+      defaultThresholdDays: DEFAULT_THRESHOLD_DAYS,
+      resources: Object.values(byResource).sort(function(a,b){ return b.currentCount - a.currentCount; }),
+      currentTasks: currentTasks,
+      completedLastMonth: completedLastMonth,
+      allTimeCompleted: allTimeCompleted,
+    });
+  } catch(err) { next(err); }
+}
+
+module.exports = { getSummary, getSubtaskAssignees, getResourceReport };

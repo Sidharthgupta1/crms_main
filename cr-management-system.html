@@ -117,6 +117,14 @@
   tbody tr:last-child td{border-bottom:none}
   .empty-row td{text-align:center;color:var(--grey-400);padding:40px;font-size:13px}
 
+  /* Excel-style full grid — every cell boxed on all sides, not just row separators */
+  .grid-table{border:1px solid var(--grey-300)}
+  .grid-table th,.grid-table td{border:1px solid var(--grey-300)}
+  .grid-table thead tr{background:var(--grey-50)}
+  .grid-table tbody tr:last-child td{border-bottom:1px solid var(--grey-300)}
+  .grid-table tbody tr:nth-child(even){background:var(--grey-50)}
+  .grid-table tbody tr:nth-child(even):hover{background:var(--grey-100)}
+
   /* BADGES */
   .badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;letter-spacing:.2px}
   .badge-draft{background:var(--grey-100);color:var(--grey-600)}
@@ -747,6 +755,10 @@ select.tl-cell {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="9" x2="9" y2="21"/></svg>
           Task List
         </div>
+        <div class="sidebar-item" onclick="showView('resource-report',this)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          Resource Report
+        </div>
       </div>
       <div class="sidebar-section" id="admin-menu" style="display:none">
         <div class="sidebar-label">Admin</div>
@@ -1058,6 +1070,102 @@ select.tl-cell {
         </div>
         <div class="stats-row" id="analytics-stats"></div>
         <div class="analytics-grid" id="analytics-charts"></div>
+      </div>
+
+      <!-- RESOURCE REPORT VIEW -->
+      <div class="view" id="view-resource-report">
+        <div class="page-header">
+          <div><h1>Resource Report</h1><p id="rr-scope-label">Sub-task workload by resource</p></div>
+          <div class="page-header-actions" style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-outline btn-sm" onclick="rrExportExcel()" style="border-color:#16a34a;color:#16a34a" title="Downloads the Resource Ageing Matrix, Current In-Hand Tasks and Completed (30d) tasks as an Excel workbook — one sheet per section">&#11015; Export Excel</button>
+            <button class="btn btn-outline btn-sm" onclick="rrExportPDF()" style="border-color:#6366f1;color:#6366f1" title="Opens a print-ready view of the full report, styled the same as the tool, so you can save it as a PDF">&#128196; Export PDF</button>
+          </div>
+        </div>
+
+        <div style="background:var(--white);border:1px solid var(--grey-200);border-radius:var(--radius);padding:14px 18px;margin-bottom:18px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+          <span style="font-size:12px;font-weight:700;color:var(--grey-600);text-transform:uppercase;letter-spacing:.4px">Filter By</span>
+          <div class="form-field" style="margin:0;flex:1;min-width:180px">
+            <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--grey-600);display:block;margin-bottom:4px">Resource</label>
+            <select id="rr-resource" class="filter-select" style="width:100%" onchange="renderResourceReport()">
+              <option value="">All Resources</option>
+            </select>
+          </div>
+          <div class="form-field" style="margin:0;flex:1;min-width:160px">
+            <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--grey-600);display:block;margin-bottom:4px">Module</label>
+            <select id="rr-module" class="filter-select" style="width:100%" onchange="renderResourceReport()">
+              <option value="">All Modules</option>
+            </select>
+          </div>
+          <div class="form-field" style="margin:0;flex:1;min-width:160px">
+            <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--grey-600);display:block;margin-bottom:4px">Company</label>
+            <select id="rr-company" class="filter-select" style="width:100%" onchange="renderResourceReport()">
+              <option value="">All Companies</option>
+            </select>
+          </div>
+          <button class="btn btn-outline btn-sm" onclick="resetResourceReportFilters()" style="margin-top:18px">✕ Reset</button>
+          <span id="rr-match-count" style="margin-top:18px;font-size:11px;color:var(--grey-400)"></span>
+        </div>
+
+        <div class="tla-stat-row" id="rr-stats"></div>
+
+        <div class="page-header" style="margin-bottom:8px"><div><h2 style="font-size:15px;margin:0">Resource Ageing Matrix</h2><p style="margin:2px 0 0;font-size:12px;color:var(--grey-500)">Open tasks: days overdue vs. Planned End Date (as of today). Completed tasks: days overdue at Actual Completion vs. Planned End Date.</p></div></div>
+        <div class="table-wrap" style="margin-bottom:24px">
+          <table class="grid-table">
+            <thead>
+              <tr>
+                <th rowspan="2" style="vertical-align:middle">Resource Name</th>
+                <th rowspan="2" style="vertical-align:middle">Current In Hand</th>
+                <th rowspan="2" style="vertical-align:middle">Completed (30)</th>
+                <th colspan="4" style="text-align:center;background:#fff3cd;color:#856404">Open Task Ageing</th>
+                <th colspan="4" style="text-align:center;background:#fff3cd;color:#856404">Completed Task Ageing</th>
+              </tr>
+              <tr>
+                <th style="background:#fff3cd;color:#856404">0 Days</th>
+                <th style="background:#fff3cd;color:#856404">1 to 3 Days</th>
+                <th style="background:#fff3cd;color:#856404">4 to 20 Days</th>
+                <th style="background:#fff3cd;color:#856404">&gt;20 Days</th>
+                <th style="background:#fff3cd;color:#856404">0 Days</th>
+                <th style="background:#fff3cd;color:#856404">1 to 3 Days</th>
+                <th style="background:#fff3cd;color:#856404">4 to 20 Days</th>
+                <th style="background:#fff3cd;color:#856404">&gt;20 Days</th>
+              </tr>
+            </thead>
+            <tbody id="rr-matrix-tbody"><tr class="empty-row"><td colspan="11">No data</td></tr></tbody>
+          </table>
+        </div>
+
+        <div id="rr-section-current" style="margin-bottom:24px">
+          <div class="page-header" style="margin-bottom:8px"><div><h2 style="font-size:15px;margin:0">Current In-Hand Tasks</h2></div></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Phase</th><th>Status</th><th>Reported On</th><th>Task Ageing</th><th>Phase Ageing</th></tr></thead>
+              <tbody id="rr-current-tbody"><tr class="empty-row"><td colspan="10">No open tasks</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="rr-section-completed" style="margin-bottom:24px">
+          <div class="page-header" style="margin-bottom:8px"><div><h2 id="rr-completed-title" style="font-size:15px;margin:0">Completed — Last 30 Days</h2></div></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Phase</th><th>Reported On</th><th>Closed On</th><th>Days to Close</th><th>Status</th></tr></thead>
+              <tbody id="rr-completed-tbody"><tr class="empty-row"><td colspan="10">No completed tasks</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="rr-section-alltime" style="display:none">
+          <div class="page-header" style="margin-bottom:8px">
+            <div><h2 style="font-size:15px;margin:0">All-Time Completed Tasks</h2></div>
+            <button class="btn btn-outline btn-sm" onclick="rrExportAllTime()" style="border-color:#d97706;color:#d97706">&#11015; Export All-Time CSV</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Phase</th><th>Reported On</th><th>Closed On</th><th>Days to Close</th><th>Status</th></tr></thead>
+              <tbody id="rr-alltime-tbody"><tr class="empty-row"><td colspan="10">No completed tasks</td></tr></tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
       <!-- APPROVALS VIEW -->
@@ -1974,6 +2082,7 @@ function showView(name,el){
     releases:      renderMyReleases,
     'all-releases':renderAllReleases,
     analytics:     () => { populateAnalyticsFilters(); renderAnalytics(); },
+    'resource-report': () => { populateResourceReportFilters(); renderResourceReport(); },
     approvals:     renderApprovalsList,
     audit:         renderAuditLog,
     admin:         renderAdmin,
@@ -2010,23 +2119,15 @@ function stateBadge(s) {
 
 function prioCell(p) { return `<span class="priority-dot ${PRIO_DOT[p]||'p4'}"></span>${PRIO_MAP[p]||p}`; }
 function pendingCell(r) {
-  var state = r.state || '';
-  // Deployment's pending-approval states don't contain "Awaiting" (they're
-  // just "Deployment Approval L{n}"), unlike RD/FSD's "* Awaiting Approval
-  // L{n}" — checking for "Awaiting" alone silently hid every Deployment
-  // approval from this column.
-  var isAwaiting = state.indexOf('Awaiting') >= 0 || state.indexOf('Deployment Approval') >= 0;
-  if (!isAwaiting) return '<span style="color:var(--grey-400)">—</span>';
-  var ftype = state.indexOf('FSD') >= 0 ? 'FSD' : state.indexOf('Deployment') >= 0 ? 'DEPLOYMENT' : 'RD';
-  var m = state.match(/L(\d+)$/);
-  var lvl = m ? m[1] : '?';
-  var cache = window._pendingCache || {};
-  var name = cache[r.releaseId] || 'Approver';
+  // "Pending With" is who actually holds the currently-open sub-task for
+  // this CR (r.pendingWith, computed server-side from crms_release_tasks) —
+  // not a phase/approval-status label.
+  if (["Closed","Cancelled"].includes(r.state)) return '<span style="color:var(--grey-400)">—</span>';
+  var name = r.pendingWith || '';
+  if (!name) return '<span style="color:var(--grey-400)">—</span>';
   return '<span style="background:#fff8e1;color:#e65100;font-size:11px;font-weight:600;' +
-         'padding:2px 8px;border-radius:8px;white-space:nowrap">' +
-         '⏳ ' + ftype + ' L' + lvl + ' → ' + name + '</span>';
+         'padding:2px 8px;border-radius:8px;white-space:nowrap">⏳ ' + name + '</span>';
 }
-
 function slaStatus(r) {
   if (['Closed','Cancelled'].includes(r.state)) return `<span class="sla-ok">✓ Done</span>`;
   // Phase ageing — days since the CR entered its CURRENT phase/state, not
@@ -2174,12 +2275,6 @@ async function quickReject(releaseId) {
 // MY RELEASES
 // ══════════════════════════════════════════════════════════════════════
 async function renderMyReleases() {
-  // Pre-fetch pending approvals to show approver names in table
-  window._pendingCache = {};
-  var pendingData = await GET('/approvals/my-release-status');
-  if (pendingData && Array.isArray(pendingData)) {
-    pendingData.forEach(function(p) { window._pendingCache[p.releaseId] = p.approverName; });
-  }
   var data = await GET('/releases?mine=1&pageSize=200');
   const mine = data?.data || [];
   const tbody = document.getElementById('my-releases-tbody');
@@ -2449,6 +2544,317 @@ function exportAnalyticsPrint() {
     '<div>'+charts.innerHTML.replace(/onclick="[^"]*"/g,'')+'</div></body></html>');
   win.document.close();
   setTimeout(function(){win.print();},400);
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// RESOURCE REPORT — sub-task workload by resource (assigned_to), not by
+// CR requester. Management view: last-30-day completed tasks classified
+// Default/Non-Default (aging > 15d = Default), current in-hand tasks with
+// ageing, and an all-time completed list. KPI tiles double as filters —
+// clicking one narrows which table below is shown (styled like the Task
+// List Analytics tab: .tla-stat-row / .tla-card / .tla-bar-row).
+// ══════════════════════════════════════════════════════════════════════
+var rrActiveFilter = null; // null | 'current' | 'completed' | 'default' | 'alltime'
+
+function populateResourceReportFilters() {
+  var resSel = document.getElementById('rr-resource');
+  if (resSel && resSel.options.length <= 1) {
+    var cur = resSel.value;
+    var opts = (REF.users || []).slice().sort(function(a,b){ return (a.fullName||'').localeCompare(b.fullName||''); });
+    resSel.innerHTML = '<option value="">All Resources</option>' +
+      opts.map(function(u){ return '<option value="'+u.userId+'">'+u.fullName+'</option>'; }).join('');
+    resSel.value = cur;
+  }
+  var modSel = document.getElementById('rr-module');
+  if (modSel && modSel.options.length <= 1) {
+    var curM = modSel.value;
+    modSel.innerHTML = '<option value="">All Modules</option>' +
+      (REF.modules || []).map(function(m){ return '<option value="'+m.moduleId+'">'+m.moduleName+'</option>'; }).join('');
+    modSel.value = curM;
+  }
+  var coSel = document.getElementById('rr-company');
+  if (coSel && coSel.options.length <= 1) {
+    var curC = coSel.value;
+    coSel.innerHTML = '<option value="">All Companies</option>' +
+      (REF.companies || []).map(function(c){ return '<option value="'+c.companyName+'">'+c.companyName+'</option>'; }).join('');
+    coSel.value = curC;
+  }
+}
+
+function resetResourceReportFilters() {
+  ['rr-resource','rr-module','rr-company'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
+  rrActiveFilter = null;
+  renderResourceReport();
+}
+
+function rrSetFilter(name) {
+  rrActiveFilter = (rrActiveFilter === name) ? null : name;
+  renderResourceReport();
+}
+
+// Clicking a resource's name in the Ageing Matrix acts like picking them in
+// the Resource filter — narrows the Current In-Hand / Completed detail
+// tables below to just that person. Clicking the same name again clears it.
+function rrFilterByResource(userId) {
+  var sel = document.getElementById('rr-resource');
+  if (!sel) return;
+  var uid = String(userId);
+  sel.value = (sel.value === uid) ? '' : uid;
+  rrActiveFilter = null;
+  renderResourceReport();
+}
+
+function rrOpenRelease(releaseId) {
+  if (releaseId) openDetail(releaseId);
+}
+async function rrOpenTask(releaseId, taskId) {
+  if (!releaseId) return;
+  await openDetail(releaseId);
+  if (taskId) openSubTaskDetail(taskId);
+}
+
+async function renderResourceReport() {
+  var resourceId = (document.getElementById('rr-resource') || {}).value || '';
+  var moduleId   = (document.getElementById('rr-module')   || {}).value || '';
+  var company    = (document.getElementById('rr-company')  || {}).value || '';
+
+  var url = '/analytics/resource-report?';
+  if (moduleId) url += 'moduleId=' + moduleId + '&';
+  if (company)  url += 'company='  + encodeURIComponent(company) + '&';
+
+  var data = await GET(url);
+  if (!data) return;
+
+  var threshold = data.defaultThresholdDays || 15;
+  var resources = data.resources || [];
+  var currentTasks       = (data.currentTasks       || []).filter(function(t){ return !resourceId || String(t.resourceUserId) === resourceId; });
+  var completedLastMonth = (data.completedLastMonth || []).filter(function(t){ return !resourceId || String(t.resourceUserId) === resourceId; });
+  var allTimeCompleted   = (data.allTimeCompleted   || []).filter(function(t){ return !resourceId || String(t.resourceUserId) === resourceId; });
+
+  var scopeEl = document.getElementById('rr-scope-label');
+  if (scopeEl) scopeEl.textContent = resourceId
+    ? 'Showing: ' + (REF.users.find(function(u){return String(u.userId)===resourceId;})||{fullName:resourceId}).fullName
+    : 'Sub-task workload by resource (assignee), org-wide';
+
+  var matchEl = document.getElementById('rr-match-count');
+  if (matchEl) matchEl.textContent = currentTasks.length + ' open / ' + completedLastMonth.length + ' completed (30d)';
+
+  var defaultCount = completedLastMonth.filter(function(t){ return t.isDefault; }).length;
+  var allTimeTotal = allTimeCompleted.length;
+
+  function tile(key, val, lbl, color) {
+    var active = rrActiveFilter === key;
+    return '<div class="tla-stat" style="cursor:pointer;'+(active?'box-shadow:0 0 0 2px '+color+';border-radius:8px':'')+'" onclick="rrSetFilter(\''+key+'\')">'+
+      '<div class="tla-stat-val" style="color:'+color+'">'+val+'</div><div class="tla-stat-lbl">'+lbl+'</div></div>';
+  }
+  document.getElementById('rr-stats').innerHTML =
+    tile('current',   currentTasks.length,       'Current In-Hand',           '#3b82f6') +
+    tile('completed', completedLastMonth.length, 'Completed (30d)',           '#16a34a') +
+    tile('default',   defaultCount,              'Default (&gt;'+threshold+'d)', '#ef4444') +
+    tile('alltime',   allTimeTotal,               'All-Time Completed',        '#f59e0b');
+
+  var matrixResources = resourceId ? resources.filter(function(r){ return String(r.userId)===resourceId; }) : resources;
+  document.getElementById('rr-matrix-tbody').innerHTML = matrixResources.length
+    ? matrixResources.map(function(r){
+        var active = resourceId === String(r.userId);
+        return '<tr'+(active?' style="background:#fff8e1"':'')+'><td><a class="cr-link" onclick="rrFilterByResource(\''+r.userId+'\')" title="Show this resource\'s Current In-Hand and Completed task detail below">'+r.name+'</a></td>'+
+          '<td>'+r.currentCount+'</td><td>'+r.completedLastMonthCount+'</td>'+
+          '<td>'+r.openAgeing0+'</td><td>'+r.openAgeing1to3+'</td><td>'+r.openAgeing4to20+'</td><td>'+r.openAgeingGt20+'</td>'+
+          '<td>'+r.closedAgeing0+'</td><td>'+r.closedAgeing1to3+'</td><td>'+r.closedAgeing4to20+'</td><td>'+r.closedAgeingGt20+'</td></tr>';
+      }).join('')
+    : '<tr class="empty-row"><td colspan="11">No data</td></tr>';
+
+  function relLink(t) { return '<a class="cr-link" onclick="rrOpenRelease('+t.releaseId+')">'+(t.releaseNumber||'')+'</a>'; }
+  function taskLink(t) { return '<a class="cr-link" onclick="rrOpenTask('+t.releaseId+','+t.taskId+')">'+(t.taskNumber||'')+'</a>'; }
+  function defaultBadge(t) {
+    return t.isDefault
+      ? '<span class="badge" style="background:#fde8e8;color:#c0392b">Default</span>'
+      : '<span class="badge" style="background:#e8f8ee;color:#16a34a">Non-Default</span>';
+  }
+
+  document.getElementById('rr-current-tbody').innerHTML = currentTasks.length
+    ? currentTasks.map(function(t){
+        return '<tr><td>'+t.resourceName+'</td><td>'+relLink(t)+'</td><td>'+(t.moduleName||'—')+'</td><td>'+(t.company||'—')+'</td>'+
+          '<td>'+taskLink(t)+'</td><td>'+(t.phaseCode||'')+'</td><td>'+(t.state||'')+'</td>'+
+          '<td>'+(t.reportedAt ? new Date(t.reportedAt).toLocaleDateString('en-IN') : '')+'</td>'+
+          '<td>'+t.taskAgeingDays+'d</td><td>'+t.phaseAgeingDays+'d</td></tr>';
+      }).join('')
+    : '<tr class="empty-row"><td colspan="10">No open tasks</td></tr>';
+
+  var completedRowsForDisplay = (rrActiveFilter === 'default')
+    ? completedLastMonth.filter(function(t){ return t.isDefault; })
+    : completedLastMonth;
+  var completedTitleEl = document.getElementById('rr-completed-title');
+  if (completedTitleEl) completedTitleEl.textContent = (rrActiveFilter === 'default')
+    ? 'Completed — Last 30 Days (Default only)' : 'Completed — Last 30 Days';
+  document.getElementById('rr-completed-tbody').innerHTML = completedRowsForDisplay.length
+    ? completedRowsForDisplay.map(function(t){
+        return '<tr><td>'+t.resourceName+'</td><td>'+relLink(t)+'</td><td>'+(t.moduleName||'—')+'</td><td>'+(t.company||'—')+'</td>'+
+          '<td>'+taskLink(t)+'</td><td>'+(t.phaseCode||'')+'</td>'+
+          '<td>'+(t.reportedAt ? new Date(t.reportedAt).toLocaleDateString('en-IN') : '')+'</td>'+
+          '<td>'+(t.closedAt ? new Date(t.closedAt).toLocaleDateString('en-IN') : '')+'</td>'+
+          '<td>'+t.daysToClose+'d</td><td>'+defaultBadge(t)+'</td></tr>';
+      }).join('')
+    : '<tr class="empty-row"><td colspan="10">No completed tasks</td></tr>';
+
+  document.getElementById('rr-alltime-tbody').innerHTML = allTimeCompleted.length
+    ? allTimeCompleted.map(function(t){
+        return '<tr><td>'+t.resourceName+'</td><td>'+relLink(t)+'</td><td>'+(t.moduleName||'—')+'</td><td>'+(t.company||'—')+'</td>'+
+          '<td>'+taskLink(t)+'</td><td>'+(t.phaseCode||'')+'</td>'+
+          '<td>'+(t.reportedAt ? new Date(t.reportedAt).toLocaleDateString('en-IN') : '')+'</td>'+
+          '<td>'+(t.closedAt ? new Date(t.closedAt).toLocaleDateString('en-IN') : '')+'</td>'+
+          '<td>'+t.daysToClose+'d</td><td>'+defaultBadge(t)+'</td></tr>';
+      }).join('')
+    : '<tr class="empty-row"><td colspan="10">No completed tasks</td></tr>';
+
+  // Section visibility follows the active KPI-tile filter; with none
+  // selected, show Current + Completed(30d) side by side (the default view).
+  var sections = { current:'rr-section-current', completed:'rr-section-completed', default:'rr-section-completed', alltime:'rr-section-alltime' };
+  ['rr-section-current','rr-section-completed','rr-section-alltime'].forEach(function(id){
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.style.display = rrActiveFilter ? (sections[rrActiveFilter] === id ? '' : 'none') : (id === 'rr-section-alltime' ? 'none' : '');
+  });
+
+  window._rrExportData = {
+    matrixResources: matrixResources,
+    currentTasks: currentTasks,
+    completedLastMonth: completedLastMonth,
+    allTimeCompleted: allTimeCompleted,
+  };
+}
+
+// Both export options produce the SAME content — the full report exactly
+// as displayed in the tool (Resource Ageing Matrix + Current In-Hand +
+// Completed Last 30 Days) — just in different file formats:
+//   - Excel: a real .xlsx workbook, one sheet per section (SheetJS, same
+//     lazy-load pattern already used for the CR History export below).
+//   - PDF: a styled, colour-matched print view (grid borders, the same
+//     yellow ageing-header shading and Default/Non-Default badge colours
+//     used on screen) opened via window.print(), so the user picks "Save
+//     as PDF" as the destination. A PDF is a static document, so this
+//     reproduces the tool's look exactly but not its click-to-filter
+//     behaviour — that only exists in the live page.
+async function rrExportExcel() {
+  var d = window._rrExportData;
+  if (!d) { toast('Load Resource Report first', true); return; }
+  if (typeof XLSX === 'undefined') {
+    await new Promise(function(resolve, reject) {
+      var s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+  var wb = XLSX.utils.book_new();
+  function makeWS(headers, rows) { return XLSX.utils.aoa_to_sheet([headers].concat(rows)); }
+
+  var wsMatrix = makeWS(
+    ['Resource Name','Current In Hand','Completed (30)',
+     'Open Task Ageing (0 Days)','Open Task Ageing (1 to 3 Days)','Open Task Ageing (4 to 20 Days)','Open Task Ageing (>20 Days)',
+     'Completed Task Ageing (0 Days)','Completed Task Ageing (1 to 3 Days)','Completed Task Ageing (4 to 20 Days)','Completed Task Ageing (>20 Days)'],
+    d.matrixResources.map(function(r){ return [r.name, r.currentCount, r.completedLastMonthCount,
+      r.openAgeing0, r.openAgeing1to3, r.openAgeing4to20, r.openAgeingGt20,
+      r.closedAgeing0, r.closedAgeing1to3, r.closedAgeing4to20, r.closedAgeingGt20]; })
+  );
+  XLSX.utils.book_append_sheet(wb, wsMatrix, 'Ageing Matrix');
+
+  var wsCurrent = makeWS(
+    ['Resource','Release No.','Module','Company','Task No.','Phase','Status','Reported On','Task Ageing (d)','Phase Ageing (d)'],
+    d.currentTasks.map(function(t){ return [t.resourceName, t.releaseNumber||'', t.moduleName||'', t.company||'', t.taskNumber||'', t.phaseCode||'', t.state||'',
+      t.reportedAt ? new Date(t.reportedAt).toLocaleDateString('en-IN') : '', t.taskAgeingDays, t.phaseAgeingDays]; })
+  );
+  XLSX.utils.book_append_sheet(wb, wsCurrent, 'Current In-Hand');
+
+  var wsCompleted = makeWS(
+    ['Resource','Release No.','Module','Company','Task No.','Phase','Reported On','Closed On','Days To Close','Status'],
+    d.completedLastMonth.map(function(t){ return [t.resourceName, t.releaseNumber||'', t.moduleName||'', t.company||'', t.taskNumber||'', t.phaseCode||'',
+      t.reportedAt ? new Date(t.reportedAt).toLocaleDateString('en-IN') : '',
+      t.closedAt ? new Date(t.closedAt).toLocaleDateString('en-IN') : '', t.daysToClose, t.isDefault ? 'Default' : 'Non-Default']; })
+  );
+  XLSX.utils.book_append_sheet(wb, wsCompleted, 'Completed (30d)');
+
+  try {
+    var fname = 'resource_report_'+new Date().toISOString().slice(0,10)+'.xlsx';
+    XLSX.writeFile(wb, fname);
+    toast('Downloaded: '+fname, false, 'green');
+  } catch(e) { toast('Download failed: '+e.message, true); }
+}
+
+function rrExportPDF() {
+  var d = window._rrExportData;
+  if (!d) { toast('Load Resource Report first', true); return; }
+
+  function esc(v) { return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+  function badge(isDefault) {
+    return isDefault
+      ? '<span style="background:#fde8e8;color:#c0392b;padding:2px 8px;border-radius:10px;font-weight:600;font-size:10px">Default</span>'
+      : '<span style="background:#e8f8ee;color:#16a34a;padding:2px 8px;border-radius:10px;font-weight:600;font-size:10px">Non-Default</span>';
+  }
+
+  var matrixRows = d.matrixResources.map(function(r){
+    return '<tr><td>'+esc(r.name)+'</td><td>'+r.currentCount+'</td><td>'+r.completedLastMonthCount+'</td>'+
+      '<td>'+r.openAgeing0+'</td><td>'+r.openAgeing1to3+'</td><td>'+r.openAgeing4to20+'</td><td>'+r.openAgeingGt20+'</td>'+
+      '<td>'+r.closedAgeing0+'</td><td>'+r.closedAgeing1to3+'</td><td>'+r.closedAgeing4to20+'</td><td>'+r.closedAgeingGt20+'</td></tr>';
+  }).join('') || '<tr><td colspan="11" style="text-align:center;color:#999">No data</td></tr>';
+
+  var currentRows = d.currentTasks.map(function(t){
+    return '<tr><td>'+esc(t.resourceName)+'</td><td>'+esc(t.releaseNumber)+'</td><td>'+esc(t.moduleName)+'</td><td>'+esc(t.company)+'</td>'+
+      '<td>'+esc(t.taskNumber)+'</td><td>'+esc(t.phaseCode)+'</td><td>'+esc(t.state)+'</td>'+
+      '<td>'+(t.reportedAt?new Date(t.reportedAt).toLocaleDateString('en-IN'):'')+'</td><td>'+t.taskAgeingDays+'d</td><td>'+t.phaseAgeingDays+'d</td></tr>';
+  }).join('') || '<tr><td colspan="10" style="text-align:center;color:#999">No open tasks</td></tr>';
+
+  var completedRows = d.completedLastMonth.map(function(t){
+    return '<tr><td>'+esc(t.resourceName)+'</td><td>'+esc(t.releaseNumber)+'</td><td>'+esc(t.moduleName)+'</td><td>'+esc(t.company)+'</td>'+
+      '<td>'+esc(t.taskNumber)+'</td><td>'+esc(t.phaseCode)+'</td>'+
+      '<td>'+(t.reportedAt?new Date(t.reportedAt).toLocaleDateString('en-IN'):'')+'</td><td>'+(t.closedAt?new Date(t.closedAt).toLocaleDateString('en-IN'):'')+'</td>'+
+      '<td>'+t.daysToClose+'d</td><td>'+badge(t.isDefault)+'</td></tr>';
+  }).join('') || '<tr><td colspan="10" style="text-align:center;color:#999">No completed tasks</td></tr>';
+
+  var win = window.open('', '_blank');
+  if (!win) { toast('Pop-up blocked — please allow pop-ups to export PDF', true); return; }
+  win.document.write('<!DOCTYPE html><html><head><title>Resource Report</title><style>'+
+    'body{font-family:Arial,sans-serif;padding:24px;font-size:12px;color:#27272a}'+
+    'h1{color:#C8102E;font-size:18px;margin:0 0 4px}'+
+    'h2{font-size:14px;margin:20px 0 8px;color:#27272a}'+
+    'p.meta{color:#888;font-size:11px;margin:0 0 16px}'+
+    'table{width:100%;border-collapse:collapse;margin-bottom:8px}'+
+    'th,td{border:1px solid #d1d1d6;padding:6px 8px;text-align:left;font-size:11px}'+
+    'thead th{background:#fafafa;font-weight:700;text-transform:uppercase;font-size:10px;letter-spacing:.3px;color:#52525b}'+
+    '.ageing-hdr{background:#fff3cd;color:#856404;text-align:center}'+
+    'tbody tr:nth-child(even){background:#fafafa}'+
+    '@media print{@page{size:landscape}button{display:none}}'+
+    '</style></head><body>'+
+    '<button onclick="window.print()" style="margin-bottom:14px;padding:6px 14px;background:#C8102E;color:#fff;border:none;border-radius:4px;cursor:pointer">Print / Save as PDF</button>'+
+    '<h1>Motherson CR Management System — Resource Report</h1>'+
+    '<p class="meta">Generated: '+new Date().toLocaleString('en-IN')+'</p>'+
+    '<h2>Resource Ageing Matrix</h2>'+
+    '<table><thead><tr><th rowspan="2">Resource Name</th><th rowspan="2">Current In Hand</th><th rowspan="2">Completed (30)</th>'+
+    '<th colspan="4" class="ageing-hdr">Open Task Ageing</th><th colspan="4" class="ageing-hdr">Completed Task Ageing</th></tr>'+
+    '<tr><th class="ageing-hdr">0 Days</th><th class="ageing-hdr">1 to 3 Days</th><th class="ageing-hdr">4 to 20 Days</th><th class="ageing-hdr">&gt;20 Days</th>'+
+    '<th class="ageing-hdr">0 Days</th><th class="ageing-hdr">1 to 3 Days</th><th class="ageing-hdr">4 to 20 Days</th><th class="ageing-hdr">&gt;20 Days</th></tr></thead>'+
+    '<tbody>'+matrixRows+'</tbody></table>'+
+    '<h2>Current In-Hand Tasks</h2>'+
+    '<table><thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Phase</th><th>Status</th><th>Reported On</th><th>Task Ageing</th><th>Phase Ageing</th></tr></thead>'+
+    '<tbody>'+currentRows+'</tbody></table>'+
+    '<h2>Completed — Last 30 Days</h2>'+
+    '<table><thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Phase</th><th>Reported On</th><th>Closed On</th><th>Days to Close</th><th>Status</th></tr></thead>'+
+    '<tbody>'+completedRows+'</tbody></table>'+
+    '</body></html>');
+  win.document.close();
+}
+
+function rrExportAllTime() {
+  var d = window._rrExportData;
+  if (!d) { toast('Load Resource Report first', true); return; }
+  var rows = [['Resource','Release No.','Module','Company','Task No.','Phase','Reported On','Closed On','Days To Close','Status']];
+  d.allTimeCompleted.forEach(function(t){
+    rows.push([t.resourceName, t.releaseNumber||'', t.moduleName||'', t.company||'', t.taskNumber||'', t.phaseCode||'',
+      t.reportedAt ? new Date(t.reportedAt).toLocaleDateString('en-IN') : '',
+      t.closedAt ? new Date(t.closedAt).toLocaleDateString('en-IN') : '', t.daysToClose, t.isDefault ? 'Default' : 'Non-Default']);
+  });
+  downloadCSVData(rows, 'resource_report_alltime_'+new Date().toISOString().slice(0,10)+'.csv');
 }
 
 
@@ -8131,7 +8537,7 @@ function renderTaskDetailPanel(task, panel) {
   if(canEdit){
     html += '<div>'+dateLbl2('Planned End Date',true)+dateInp2('te-end',task.plannedEndDate,'validateTaskEditDates()')+'</div>';
     html += '<div>'+dateLbl2('Actual Completion Date')+dateInp2('te-actual-end',task.actualEndDate,'')+
-      '<div style="font-size:11px;color:var(--grey-400);margin-top:3px">Optional - auto-set on Close Task</div></div>';
+      '<div style="font-size:11px;color:var(--grey-400);margin-top:3px">Read-only once closed — Close Task always sets this to the day you close it, overwriting anything entered here</div></div>';
   } else {
     html += field('Planned End Date',fmtDate(task.plannedEndDate)||'--',true);
     html += field('Actual Completion Date',fmtDate(task.actualEndDate)||'--',true);
