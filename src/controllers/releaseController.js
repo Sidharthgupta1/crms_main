@@ -428,7 +428,8 @@ async function getAll(req, res, next) {
       'SELECT r.release_id,r.release_number,r.state,r.priority,r.title,'+
       'r.planned_start_date,r.target_end_date,r.company,r.service,r.created_at,'+
       'r.module_id,m.module_name,r.cr_owner_user_id,uco.full_name AS cr_owner_name,'+
-      'u.full_name AS requested_by,u2.full_name AS assigned_to,ag.group_name AS assignment_group '+
+      'u.full_name AS requested_by,u2.full_name AS assigned_to,ag.group_name AS assignment_group,'+
+      '(SELECT MAX(h.changed_at) FROM crms_release_history h WHERE h.release_id=r.release_id) AS phase_started_at '+
       'FROM crms_releases r '+
       'LEFT JOIN crms_users u  ON u.user_id=r.requested_by '+
       'LEFT JOIN crms_users u2 ON u2.user_id=r.assigned_to_user_id '+
@@ -489,16 +490,20 @@ async function getOne(req, res, next) {
     const curLevel = Number(row.CURRENT_APPROVAL_LEVEL||0);
     let canApprove = false;
     const viewerUid = req.user ? num(req.user.userId) : '0';
+    const viewerIsAdmin = !!(req.user && req.user.role === 'admin');
     if (curLevel > 0 && row.STATE && (row.STATE.includes('Awaiting') || row.STATE.includes('Approval L'))) {
       const apprCtrl = getApprCtrl();
       const phaseCode = apprCtrl.stateToApprovalPhase
         ? apprCtrl.stateToApprovalPhase(row.STATE)
         : null;
       if (phaseCode && row.MODULE_ID && viewerUid !== '0') {
+        // Admins can approve/reject any pending level, not just ones
+        // specifically assigned to them.
         const mine = await db.queryOne(
           "SELECT approval_id FROM crms_release_approvals "+
           "WHERE release_id="+rid+" AND phase_code='"+phaseCode+"' AND level_order="+curLevel+
-          " AND approver_user_id="+viewerUid+" AND status='Pending'", {}
+          (viewerIsAdmin ? "" : " AND approver_user_id="+viewerUid) +
+          " AND status='Pending'", {}
         ).catch(function(){ return null; });
         canApprove = !!(mine);
       }
@@ -1430,6 +1435,10 @@ function camelizeRelease(r) {
     cemli:         r.CEMLI            || '',
     smartsheetId:  r.SMARTSHEET_ID    || '',
     processName:   r.PROCESS_NAME     || '',
+    // When this CR last changed state — i.e. when it entered its CURRENT
+    // phase. Falls back to createdAt for a CR that's never transitioned
+    // (still in its very first state). Basis for phase-ageing display.
+    phaseStartedAt: r.PHASE_STARTED_AT || r.CREATED_AT || null,
     createdAt:r.CREATED_AT, updatedAt:r.UPDATED_AT,
   };
 }

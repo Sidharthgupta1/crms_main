@@ -875,7 +875,7 @@ select.tl-cell {
               <option value="">All Groups</option>
             </select>
           </div>
-          <table><thead><tr><th>Number</th><th>Title</th><th>Module</th><th>Requested By</th><th>State</th><th>Priority</th><th>Assignment Group</th><th>Planned Start</th></tr></thead><tbody id="all-releases-tbody"><tr class="empty-row"><td colspan="8">No releases found</td></tr></tbody></table>
+          <table><thead><tr><th>Number</th><th>Title</th><th>Module</th><th>Requested By</th><th>State</th><th>Priority</th><th>Assignment Group</th><th>Planned Start</th><th>SLA</th></tr></thead><tbody id="all-releases-tbody"><tr class="empty-row"><td colspan="9">No releases found</td></tr></tbody></table>
         </div>
       </div>
 
@@ -941,6 +941,12 @@ select.tl-cell {
               <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--grey-600);display:block;margin-bottom:6px">CR Number<span class="dl-sel-count" id="dl-cr-count" style="display:none">0</span></label>
               <div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:3px"><span onclick="dlSelectAll('dl-cr-wrap')" style="font-size:10px;color:var(--red);cursor:pointer;font-weight:600">All</span><span style="font-size:10px;color:var(--grey-300)">|</span><span onclick="dlClearBox('dl-cr-wrap')" style="font-size:10px;color:var(--grey-400);cursor:pointer">None</span></div>
               <div id="dl-cr-wrap" class="dl-multibox"></div>
+            </div>
+
+            <div class="form-field" style="margin:0">
+              <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--grey-600);display:block;margin-bottom:6px">CR Owner<span class="dl-sel-count" id="dl-cro-count" style="display:none">0</span></label>
+              <div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:3px"><span onclick="dlSelectAll('dl-crowner-wrap')" style="font-size:10px;color:var(--red);cursor:pointer;font-weight:600">All</span><span style="font-size:10px;color:var(--grey-300)">|</span><span onclick="dlClearBox('dl-crowner-wrap')" style="font-size:10px;color:var(--grey-400);cursor:pointer">None</span></div>
+              <div id="dl-crowner-wrap" class="dl-multibox"></div>
             </div>
 
             <div class="form-field" style="margin:0">
@@ -1163,7 +1169,7 @@ select.tl-cell {
                   <th>Reported On</th><th>Requester</th><th>CEMLI</th><th>ServiceNow ID</th>
                   <th>Ticket No</th><th>SmartSheet</th><th>Project</th><th>Module</th>
                   <th>Process</th><th>Task Title</th><th>Owner</th><th>Status</th><th>Stage</th>
-                  <th>Pending With</th><th>Ageing</th><th style="background:#fff3cd;color:#856404">Delay Reason</th>
+                  <th>Pending With</th><th>Phase Ageing</th><th style="background:#fff3cd;color:#856404">Delay Reason</th>
                   <th style="background:#fff3cd;color:#856404">Comments</th>
                   <th>RD Approval Dt.</th><th>MD50 St</th><th>MD50 End</th><th>MD50 App.By</th>
                   <th>MD50 App. On</th><th>Dev. St</th><th>Dev. End</th><th>TFT St</th>
@@ -2005,8 +2011,13 @@ function stateBadge(s) {
 function prioCell(p) { return `<span class="priority-dot ${PRIO_DOT[p]||'p4'}"></span>${PRIO_MAP[p]||p}`; }
 function pendingCell(r) {
   var state = r.state || '';
-  if (state.indexOf('Awaiting') < 0) return '<span style="color:var(--grey-400)">—</span>';
-  var ftype = state.indexOf('FSD') >= 0 ? 'FSD' : 'RD';
+  // Deployment's pending-approval states don't contain "Awaiting" (they're
+  // just "Deployment Approval L{n}"), unlike RD/FSD's "* Awaiting Approval
+  // L{n}" — checking for "Awaiting" alone silently hid every Deployment
+  // approval from this column.
+  var isAwaiting = state.indexOf('Awaiting') >= 0 || state.indexOf('Deployment Approval') >= 0;
+  if (!isAwaiting) return '<span style="color:var(--grey-400)">—</span>';
+  var ftype = state.indexOf('FSD') >= 0 ? 'FSD' : state.indexOf('Deployment') >= 0 ? 'DEPLOYMENT' : 'RD';
   var m = state.match(/L(\d+)$/);
   var lvl = m ? m[1] : '?';
   var cache = window._pendingCache || {};
@@ -2017,10 +2028,14 @@ function pendingCell(r) {
 }
 
 function slaStatus(r) {
-  const start = r.plannedStartDate || r.startDate;
+  if (['Closed','Cancelled'].includes(r.state)) return `<span class="sla-ok">✓ Done</span>`;
+  // Phase ageing — days since the CR entered its CURRENT phase/state, not
+  // days since plannedStartDate (that field has no write path anywhere in
+  // the UI and is always blank, which made this column silently empty for
+  // every CR before this fix).
+  const start = r.phaseStartedAt || r.plannedStartDate || r.createdAt;
   if (!start) return '';
   const days = Math.floor((new Date() - new Date(start)) / 86400000);
-  if (['Closed','Cancelled'].includes(r.state)) return `<span class="sla-ok">✓ Done</span>`;
   if (days > 30) return `<span class="sla-overdue">⚠ ${days}d overdue</span>`;
   if (days > 14) return `<span class="sla-warn">⏱ ${days}d</span>`;
   return `<span class="sla-ok">✓ ${days}d</span>`;
@@ -2198,8 +2213,8 @@ async function renderAllReleases() {
         <td><a class="cr-link" onclick="openDetail(${r.releaseId})">${r.releaseNumber}</a></td>
         <td>${r.title}</td><td>${r.moduleName||'—'}</td><td>${r.requestedBy||'—'}</td><td>${stateBadge(r.state)}</td>
         <td>${prioCell(r.priority)}</td><td>${r.assignmentGroup||'—'}</td>
-        <td>${fmtDate(r.plannedStartDate)}</td></tr>`).join('')
-    : '<tr class="empty-row"><td colspan="8">No releases</td></tr>';
+        <td>${fmtDate(r.plannedStartDate)}</td><td>${slaStatus(r)}</td></tr>`).join('')
+    : '<tr class="empty-row"><td colspan="9">No releases</td></tr>';
 
   // Group summary cards using analytics API
   const statsRow = document.getElementById('group-stats-row');
@@ -3483,7 +3498,8 @@ function dlUpdateCountBadge(containerId) {
     'dl-company-wrap':'dl-co-count','dl-module-wrap':'dl-mo-count',
     'dl-group-wrap':'dl-gr-count','dl-state-wrap':'dl-st-count',
     'dl-priority-wrap':'dl-pr-count','dl-user-wrap':'dl-us-count',
-    'dl-cr-wrap':'dl-cr-count','dl-subassign-wrap':'dl-sat-count'
+    'dl-cr-wrap':'dl-cr-count','dl-subassign-wrap':'dl-sat-count',
+    'dl-crowner-wrap':'dl-cro-count'
   };
   var badgeId = MAP[containerId];
   if (!badgeId) return;
@@ -3548,7 +3564,7 @@ function resetDLBox(containerId) {
 
 function resetDLFilters() {
   ['dl-company-wrap','dl-module-wrap','dl-group-wrap','dl-state-wrap',
-   'dl-priority-wrap','dl-user-wrap','dl-cr-wrap','dl-subassign-wrap'].forEach(resetDLBox);
+   'dl-priority-wrap','dl-user-wrap','dl-cr-wrap','dl-subassign-wrap','dl-crowner-wrap'].forEach(resetDLBox);
   var from = document.getElementById('dl-from'); if (from) from.value = '';
   var to   = document.getElementById('dl-to');   if (to)   to.value   = '';
   var pw   = document.getElementById('dl-preview-wrap'); if (pw) pw.style.display = 'none';
@@ -3618,6 +3634,7 @@ function populateDownloadFilters() {
   buildDLChips('dl-state-wrap',    ALL_STATES,          function(s){ return s;             }, function(s){ return s;            }, null);
   buildDLChips('dl-priority-wrap', PRIORITIES,          function(p){ return p.v;           }, function(p){ return p.l;          }, null);
   buildDLChips('dl-user-wrap',      REF.users || [], function(u){ return u.userId;   }, function(u){ return u.fullName; }, null);
+  buildDLChips('dl-crowner-wrap',   REF.users || [], function(u){ return u.userId;   }, function(u){ return u.fullName; }, null);
   buildDLChips('dl-subassign-wrap', REF.users || [], function(u){ return u.fullName; }, function(u){ return u.fullName; }, null);
   if (!document.getElementById('dl-cr-wrap').children.length) {
     document.getElementById('dl-cr-wrap').innerHTML = '<div class="dl-chip-empty">Run Preview first</div>';
@@ -3632,6 +3649,7 @@ function getDLFilters() {
     states:     getDLSelected('dl-state-wrap'),
     priorities: getDLSelected('dl-priority-wrap'),
     users:         getDLSelected('dl-user-wrap'),
+    crOwners:      getDLSelected('dl-crowner-wrap'),
     crNumbers:     getDLSelected('dl-cr-wrap'),
     subAssignedTo: getDLSelected('dl-subassign-wrap'),
     fromDate:      (document.getElementById('dl-from')||{}).value || '',
@@ -3678,6 +3696,13 @@ async function previewDownload() {
       return u ? u.fullName : '';
     }).filter(Boolean);
     rows = rows.filter(function(r){ return usrNames.indexOf(r.requestedBy || '') >= 0; });
+  }
+  if (f.crOwners.length) {
+    var ownerNames = f.crOwners.map(function(uid){
+      var u = REF.users.find(function(x){ return String(x.userId) === uid; });
+      return u ? u.fullName : '';
+    }).filter(Boolean);
+    rows = rows.filter(function(r){ return ownerNames.indexOf(r.crOwnerName || '') >= 0; });
   }
   // ── Populate CR Number chips from this filtered universe ─────────
   _dlPopulateCRChips(rows, getDLSelected('dl-cr-wrap'));
@@ -4410,19 +4435,15 @@ function tlRenderGrid() {
       '<td class="'+sCls+'">'+sel('status', TL_STATUS_LOV, r.status, true)+'</td>'+
       '<td>'+sel('stage',       TL_STAGE_LOV, r.stage, true)+'</td>'+
       '<td>'+inp('pendingWith', r.pendingWith, true)+'</td>'+
+      // Phase Ageing — days since the CR entered its CURRENT phase (see
+      // getLiveTaskList's phaseAgeingDays), not the old ad-hoc guess from
+      // phase-end/reportedOn date strings. Blank once the CR is done
+      // (COMPLETE/DROP), matching the SLA columns elsewhere in the app.
       (function(){
-        var ag=null;
-        var endStr=r.tftEnd||r.devEnd||r.md50End;
-        if(endStr){
-          var p=endStr.split('/');
-          if(p.length===3){var d=new Date(p[2]+'-'+p[1]+'-'+p[0]);if(!isNaN(d)){ag=Math.round((new Date()-d)/86400000);}}
-        } else if(r.reportedOn){
-          var p2=r.reportedOn.split('/');
-          if(p2.length===3){var d2=new Date(p2[2]+'-'+p2[1]+'-'+p2[0]);if(!isNaN(d2)){ag=Math.round((new Date()-d2)/86400000);}}
-        }
-        if(ag===null)return'<td style="color:var(--grey-400)">—</td>';
-        var c=ag>30?'color:#dc2626;font-weight:700':ag>14?'color:#d97706;font-weight:600':'color:#16a34a';
-        return'<td style="'+c+';white-space:nowrap">'+(ag>0?'+':'')+ag+' days</td>';
+        var ag = r.phaseAgeingDays;
+        if (ag === null || ag === undefined) return '<td style="color:var(--grey-400)">—</td>';
+        var c = ag>30?'color:#dc2626;font-weight:700':ag>14?'color:#d97706;font-weight:600':'color:#16a34a';
+        return'<td style="'+c+';white-space:nowrap">'+ag+' days</td>';
       })()+
       // ALWAYS EDITABLE — highlighted amber. Title shows when the manual
       // notes were last saved, so stale/never-saved notes are visible at a glance.

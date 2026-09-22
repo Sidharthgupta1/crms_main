@@ -273,6 +273,7 @@ async function approve(req, res, next) {
   try {
     const rid      = num(req.params.releaseId);
     const uid      = num(req.user.userId);
+    const isAdmin  = req.user.role === 'admin';
     const comments = (req.body.comments||'').trim();
     const selectedNextApproverId = String(req.body.selectedApproverId || req.body.nextApproverId || '').trim();
 
@@ -297,14 +298,20 @@ async function approve(req, res, next) {
 
     await ensureLevelApprovalRecords(rid, mid, phaseCode, curLevel,null);
 
+    // Admins can approve/reject any pending level regardless of who it's
+    // actually assigned to — everyone else must be the assigned approver.
     const myApproval = await db.queryOne(
-      "SELECT approval_id FROM crms_release_approvals "+
+      "SELECT approval_id,approver_user_id FROM crms_release_approvals "+
       "WHERE release_id="+rid+" AND level_order="+curLevel+
-      " AND approver_user_id="+uid+" AND status='Pending' AND phase_code='"+phaseCode+"'", {}
+      (isAdmin ? "" : " AND approver_user_id="+uid) +
+      " AND status='Pending' AND phase_code='"+phaseCode+"'", {}
     );
     if (!myApproval) {
-      return res.status(403).json({ error:'You are not the approver for this level, or it has already been actioned.' });
+      return res.status(403).json({ error: isAdmin
+        ? 'No pending approval found for this level.'
+        : 'You are not the approver for this level, or it has already been actioned.' });
     }
+    const isOverride = isAdmin && num(myApproval.APPROVER_USER_ID) !== uid;
 
     // ── CHECK NEXT LEVEL REQUIREMENT BEFORE COMMITTING APPROVAL ──────
     const nextLevel = curLevel + 1;
@@ -349,7 +356,8 @@ async function approve(req, res, next) {
     await db.executeWithCommit(
       "INSERT INTO crms_audit(action,performed_by,cr_number,details) VALUES("+
       "'Approval',"+uid+",'"+relNum+"','"+phaseCode+" Level "+curLevel+" approved by "+safe(req.user.fullName)+
-      (forceComplete ? ' (admin — moved to Development)' : '')+"')", {}
+      (forceComplete ? ' (admin — moved to Development)' : '')+
+      (isOverride ? ' (Admin Override — not the assigned approver)' : '')+"')", {}
     );
 
     // ── Email: Notify approval completed ──────────────────────────────
@@ -496,6 +504,7 @@ async function reject(req, res, next) {
   try {
     const rid      = num(req.params.releaseId);
     const uid      = num(req.user.userId);
+    const isAdmin  = req.user.role === 'admin';
     const comments = (req.body.comments||'').trim();
     if (!comments) return res.status(422).json({ error:'Rejection reason is required.' });
 
@@ -522,13 +531,17 @@ async function reject(req, res, next) {
     const returnState = phaseCodeToState(phaseCode);
 
     const myApproval = await db.queryOne(
-      "SELECT approval_id FROM crms_release_approvals "+
+      "SELECT approval_id,approver_user_id FROM crms_release_approvals "+
       "WHERE release_id="+rid+" AND level_order="+curLevel+
-      " AND approver_user_id="+uid+" AND status='Pending' AND phase_code='"+phaseCode+"'", {}
+      (isAdmin ? "" : " AND approver_user_id="+uid) +
+      " AND status='Pending' AND phase_code='"+phaseCode+"'", {}
     );
     if (!myApproval) {
-      return res.status(403).json({ error:'You are not the approver for this level.' });
+      return res.status(403).json({ error: isAdmin
+        ? 'No pending approval found for this level.'
+        : 'You are not the approver for this level.' });
     }
+    const isOverride = isAdmin && num(myApproval.APPROVER_USER_ID) !== uid;
 
     // Mark all pending rejected
     await db.executeWithCommit(
@@ -544,7 +557,8 @@ async function reject(req, res, next) {
     );
     await db.executeWithCommit(
       "INSERT INTO crms_audit(action,performed_by,cr_number,details) VALUES("+
-      "'Rejection',"+uid+",'"+relNum+"','"+phaseCode+" L"+curLevel+" rejected: "+safe(comments.substring(0,80))+"')", {}
+      "'Rejection',"+uid+",'"+relNum+"','"+phaseCode+" L"+curLevel+" rejected: "+safe(comments.substring(0,80))+
+      (isOverride ? ' (Admin Override — not the assigned approver)' : '')+"')", {}
     );
     // Post comment
     await db.executeWithCommit(

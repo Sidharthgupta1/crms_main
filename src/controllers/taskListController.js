@@ -690,6 +690,16 @@ async function getLiveTaskList(req, res, next) {
                  : rel.STATE === 'Cancelled' ? 'DROP'
                  : 'OPEN';
 
+      // Phase Ageing = days since the CR's most recent state change, i.e.
+      // how long it has been sitting in its CURRENT phase (rHist is ordered
+      // oldest-first, so the last element is the most recent transition).
+      // Same basis as the "SLA" aging shown on the release list views.
+      var lastHist = rHist.length ? rHist[rHist.length - 1] : null;
+      var phaseStartedAt = lastHist ? lastHist.CHANGED_AT : rel.CREATED_AT;
+      var phaseAgeingDays = (phaseStartedAt && status === 'OPEN')
+        ? Math.floor((new Date() - new Date(phaseStartedAt)) / 86400000)
+        : null;
+
       // Project = company name (first segment of assignment group as fallback)
       var project = rel.COMPANY || (rel.ASSIGNMENT_GROUP||'').split(/[-_]/)[0].toUpperCase() || '';
 
@@ -768,6 +778,7 @@ async function getLiveTaskList(req, res, next) {
         status:          status,
         stage:           stage,
         pendingWith:     pendingWith,
+        phaseAgeingDays: phaseAgeingDays,
         // Manually editable fields (from crms_task_list if exists)
         delayReason:     tlRow.DELAY_REASON      || '',
         comments:        tlRow.COMMENTS          || '',
