@@ -1169,7 +1169,7 @@ select.tl-cell {
                   <th>Reported On</th><th>Requester</th><th>CEMLI</th><th>ServiceNow ID</th>
                   <th>Ticket No</th><th>SmartSheet</th><th>Project</th><th>Module</th>
                   <th>Process</th><th>Task Title</th><th>Owner</th><th>Status</th><th>Stage</th>
-                  <th>Pending With</th><th>Phase Ageing</th><th style="background:#fff3cd;color:#856404">Delay Reason</th>
+                  <th>Pending With</th><th>Task Ageing</th><th>Phase Ageing</th><th style="background:#fff3cd;color:#856404">Delay Reason</th>
                   <th style="background:#fff3cd;color:#856404">Comments</th>
                   <th>RD Approval Dt.</th><th>MD50 St</th><th>MD50 End</th><th>MD50 App.By</th>
                   <th>MD50 App. On</th><th>Dev. St</th><th>Dev. End</th><th>TFT St</th>
@@ -1195,7 +1195,7 @@ select.tl-cell {
                   <th><select class="tl-col-filter" id="tlf-status" onchange="tlApplyFilters()"><option value="">All</option><option>OPEN</option><option>HOLD</option><option>DROP</option><option>COMPLETE</option><option>NOT STARTED</option></select></th>
                   <th><select class="tl-col-filter" id="tlf-stage" onchange="tlApplyFilters()"><option value="">All</option><option>RD PENDING</option><option>RD APPROVAL</option><option>ANALYSE</option><option>MD50 CREATION</option><option>MD50 APPROVAL</option><option>DEVELOPMENT QUEUE</option><option>DEVELOPMENT</option><option>TFT TESTING</option><option>MD50 CHANGE</option><option>RE-DEVELOPMENT</option><option>INTEGRATION TESTING</option><option>UAT</option><option>USER MANUAL UPDATE</option><option>SUPPORT TEAM KT</option><option>MOVEMENT APPROVAL</option><option>DEPLOYMENT</option><option>UNDER OBSERVATION</option><option>FOLLOW UP</option><option>NOT STARTED</option></select></th>
                   <th><input class="tl-col-filter" id="tlf-pendingWith"  placeholder="Filter…" oninput="tlApplyFilters()" /></th>
-                  <th></th>
+                  <th></th><th></th>
                   <th><input class="tl-col-filter" id="tlf-delayReason"  placeholder="Filter…" oninput="tlApplyFilters()" /></th>
                   <th><input class="tl-col-filter" id="tlf-comments"     placeholder="Filter…" oninput="tlApplyFilters()" /></th>
                   <th colspan="13"></th>
@@ -4379,7 +4379,7 @@ function tlRenderGrid() {
   var STATUS_CLS = {'OPEN':'tl-status-OPEN','HOLD':'tl-status-HOLD','DROP':'tl-status-DROP','COMPLETE':'tl-status-COMPLETE','NOT STARTED':'tl-status-NOT-STARTED'};
 
   if (!visible.length) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="35" style="text-align:center;padding:20px;color:var(--grey-400)">No tasks found</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="36" style="text-align:center;padding:20px;color:var(--grey-400)">No tasks found</td></tr>';
     return;
   }
 
@@ -4435,6 +4435,23 @@ function tlRenderGrid() {
       '<td class="'+sCls+'">'+sel('status', TL_STATUS_LOV, r.status, true)+'</td>'+
       '<td>'+sel('stage',       TL_STAGE_LOV, r.stage, true)+'</td>'+
       '<td>'+inp('pendingWith', r.pendingWith, true)+'</td>'+
+      // Task Ageing — original logic: days since the most recent phase-end
+      // date (TFT/Dev/MD50 end), or since Reported On if nothing has ended
+      // yet. Restored alongside (not replaced by) Phase Ageing below.
+      (function(){
+        var ag=null;
+        var endStr=r.tftEnd||r.devEnd||r.md50End;
+        if(endStr){
+          var p=endStr.split('/');
+          if(p.length===3){var d=new Date(p[2]+'-'+p[1]+'-'+p[0]);if(!isNaN(d)){ag=Math.round((new Date()-d)/86400000);}}
+        } else if(r.reportedOn){
+          var p2=r.reportedOn.split('/');
+          if(p2.length===3){var d2=new Date(p2[2]+'-'+p2[1]+'-'+p2[0]);if(!isNaN(d2)){ag=Math.round((new Date()-d2)/86400000);}}
+        }
+        if(ag===null)return'<td style="color:var(--grey-400)">—</td>';
+        var c=ag>30?'color:#dc2626;font-weight:700':ag>14?'color:#d97706;font-weight:600':'color:#16a34a';
+        return'<td style="'+c+';white-space:nowrap">'+(ag>0?'+':'')+ag+' days</td>';
+      })()+
       // Phase Ageing — days since the CR entered its CURRENT phase (see
       // getLiveTaskList's phaseAgeingDays), not the old ad-hoc guess from
       // phase-end/reportedOn date strings. Blank once the CR is done
