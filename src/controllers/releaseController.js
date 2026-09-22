@@ -457,12 +457,14 @@ async function getOne(req, res, next) {
       'u.full_name AS requested_by,u.user_id AS requested_by_user_id,'+
       'u2.full_name AS assigned_to,u2.user_id AS assigned_to_user_id,'+
       'u3.full_name AS cr_owner_name,'+
-      'ag.group_name AS assignment_group '+
+      'ag.group_name AS assignment_group,'+
+      'm.module_name '+
       'FROM crms_releases r '+
       'LEFT JOIN crms_users u  ON u.user_id=r.requested_by '+
       'LEFT JOIN crms_users u2 ON u2.user_id=r.assigned_to_user_id '+
       'LEFT JOIN crms_users u3 ON u3.user_id=r.cr_owner_user_id '+
       'LEFT JOIN crms_assignment_groups ag ON ag.group_id=r.assignment_group_id '+
+      'LEFT JOIN crms_modules m ON m.module_id=r.module_id '+
       'WHERE r.release_id='+rid+' AND r.is_deleted=0', {}
     );
     if (!row) return res.status(404).json({ error:'Release not found' });

@@ -787,7 +787,7 @@ select.tl-cell {
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
           <div>
             <div style="font-size:12px;font-weight:700;color:var(--grey-600);margin-bottom:10px;text-transform:uppercase;letter-spacing:.4px">My Recent Releases</div>
-            <div class="table-wrap"><table><thead><tr><th>Number</th><th>Title</th><th>State</th><th>SLA</th></tr></thead><tbody id="dash-my-table"><tr class="empty-row"><td colspan="4">No releases yet</td></tr></tbody></table></div>
+            <div class="table-wrap"><table><thead><tr><th>Number</th><th>Title</th><th>Module</th><th>State</th><th>SLA</th></tr></thead><tbody id="dash-my-table"><tr class="empty-row"><td colspan="5">No releases yet</td></tr></tbody></table></div>
           </div>
           <div>
             <div style="font-size:12px;font-weight:700;color:var(--grey-600);margin-bottom:10px;text-transform:uppercase;letter-spacing:.4px">Assigned to Me</div>
@@ -841,7 +841,7 @@ select.tl-cell {
               <option value="3">3 – Moderate</option><option value="4">4 – Low</option>
             </select>
           </div>
-          <table><thead><tr><th onclick="sortTable('my-releases-tbody',0)">Number ↕</th><th>Title</th><th>State</th><th style="min-width:160px">Pending With</th><th>Priority</th><th>Company</th><th>Planned Start</th><th>SLA</th><th>Actions</th></tr></thead><tbody id="my-releases-tbody"><tr class="empty-row"><td colspan="8">No releases found</td></tr></tbody></table>
+          <table><thead><tr><th onclick="sortTable('my-releases-tbody',0)">Number ↕</th><th>Title</th><th>Module</th><th>State</th><th style="min-width:160px">Pending With</th><th>Priority</th><th>Company</th><th>Planned Start</th><th>SLA</th><th>Actions</th></tr></thead><tbody id="my-releases-tbody"><tr class="empty-row"><td colspan="10">No releases found</td></tr></tbody></table>
         </div>
       </div>
 
@@ -875,7 +875,7 @@ select.tl-cell {
               <option value="">All Groups</option>
             </select>
           </div>
-          <table><thead><tr><th>Number</th><th>Title</th><th>Requested By</th><th>State</th><th>Priority</th><th>Assignment Group</th><th>Planned Start</th></tr></thead><tbody id="all-releases-tbody"><tr class="empty-row"><td colspan="7">No releases found</td></tr></tbody></table>
+          <table><thead><tr><th>Number</th><th>Title</th><th>Module</th><th>Requested By</th><th>State</th><th>Priority</th><th>Assignment Group</th><th>Planned Start</th></tr></thead><tbody id="all-releases-tbody"><tr class="empty-row"><td colspan="8">No releases found</td></tr></tbody></table>
         </div>
       </div>
 
@@ -1187,7 +1187,7 @@ select.tl-cell {
                   <th><input class="tl-col-filter" id="tlf-taskTitle"    placeholder="Filter…" oninput="tlApplyFilters()" /></th>
                   <th><input class="tl-col-filter" id="tlf-owner"        placeholder="Filter…" oninput="tlApplyFilters()" /></th>
                   <th><select class="tl-col-filter" id="tlf-status" onchange="tlApplyFilters()"><option value="">All</option><option>OPEN</option><option>HOLD</option><option>DROP</option><option>COMPLETE</option><option>NOT STARTED</option></select></th>
-                  <th><select class="tl-col-filter" id="tlf-stage" onchange="tlApplyFilters()"><option value="">All</option><option>RD PENDING</option><option>RD DISCUSSION</option><option>ANALYSE</option><option>MD50 CREATION</option><option>MD50 APPROVAL</option><option>DEVELOPMENT QUEUE</option><option>DEVELOPMENT</option><option>TFT TESTING</option><option>MD50 CHANGE</option><option>RE-DEVELOPMENT</option><option>INTEGRATION TESTING</option><option>UAT</option><option>USER MANUAL UPDATE</option><option>SUPPORT TEAM KT</option><option>MOVEMENT APPROVAL</option><option>DEPLOYMENT</option><option>UNDER OBSERVATION</option><option>FOLLOW UP</option><option>NOT STARTED</option></select></th>
+                  <th><select class="tl-col-filter" id="tlf-stage" onchange="tlApplyFilters()"><option value="">All</option><option>RD PENDING</option><option>RD APPROVAL</option><option>ANALYSE</option><option>MD50 CREATION</option><option>MD50 APPROVAL</option><option>DEVELOPMENT QUEUE</option><option>DEVELOPMENT</option><option>TFT TESTING</option><option>MD50 CHANGE</option><option>RE-DEVELOPMENT</option><option>INTEGRATION TESTING</option><option>UAT</option><option>USER MANUAL UPDATE</option><option>SUPPORT TEAM KT</option><option>MOVEMENT APPROVAL</option><option>DEPLOYMENT</option><option>UNDER OBSERVATION</option><option>FOLLOW UP</option><option>NOT STARTED</option></select></th>
                   <th><input class="tl-col-filter" id="tlf-pendingWith"  placeholder="Filter…" oninput="tlApplyFilters()" /></th>
                   <th></th>
                   <th><input class="tl-col-filter" id="tlf-delayReason"  placeholder="Filter…" oninput="tlApplyFilters()" /></th>
@@ -1392,6 +1392,7 @@ select.tl-cell {
           <div class="form-field"><label>Priority</label><input id="dv-priority" readonly /></div>
           <div class="form-field"><label>Company</label><input id="dv-company" readonly /></div>
           <div class="form-field"><label>Service</label><input id="dv-service" readonly /></div>
+          <div class="form-field"><label>Module</label><input id="dv-module" readonly /></div>
           <!-- Planned Start and Target End removed -->
           <div class="form-field"><label>Assignment Group</label><input id="dv-ag" readonly /></div>
           <div class="form-field"><label>Assigned To</label><input id="dv-at" readonly /></div>
@@ -2058,7 +2059,7 @@ async function renderDashboard() {
   const tbody = document.getElementById('dash-my-table');
   tbody.innerHTML = mine.length
     ? mine.map(r => `<tr><td><a class="cr-link" onclick="openDetail(${r.releaseId})">${r.releaseNumber}</a></td>
-        <td>${(r.title||'').substring(0,30)}…</td><td>${stateBadge(r.state)}</td><td>${slaStatus(r)}</td></tr>`).join('')
+        <td>${(r.title||'').substring(0,30)}…</td><td>${r.moduleName||'—'}</td><td>${stateBadge(r.state)}</td><td>${slaStatus(r)}</td></tr>`).join('')
     : '<tr class="empty-row"><td colspan="4">No releases yet</td></tr>';
 
   // Merge legacy tasks + phase tasks into Assigned to Me table
@@ -2102,10 +2103,10 @@ async function renderPendingApprovalsPanel() {
     ? rows.map(r =>
         '<tr>' +
         '<td><a class="cr-link" onclick="openDetail(' + r.releaseId + ')">' + r.releaseNumber + '</a></td>' +
-        '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + r.title + '">' + r.title + '</td>' +
+        '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + r.releaseTitle + '">' + r.releaseTitle + '</td>' +
         '<td>' + (r.moduleName || '—') + '</td>' +
         '<td>' + r.requestedBy + '</td>' +
-        '<td><span style="background:#e8f5e9;color:#1b5e20;font-size:11px;font-weight:700;padding:2px 8px;border-radius:8px">' + (r.flowType||'RD') + '</span></td>' +
+        '<td><span style="background:#e8f5e9;color:#1b5e20;font-size:11px;font-weight:700;padding:2px 8px;border-radius:8px">' + (r.phaseCode||'—') + '</span></td>' +
         '<td><span style="background:#fff8e1;color:#e65100;font-size:11px;font-weight:700;padding:2px 8px;border-radius:8px">L' + r.levelOrder + '</span></td>' +
         '<td style="display:flex;gap:4px">' +
           '<button class="btn btn-red btn-sm" onclick="quickApprove(' + r.releaseId + ')">Approve</button>' +
@@ -2170,12 +2171,12 @@ async function renderMyReleases() {
   tbody.innerHTML = mine.length
     ? mine.map(r => `<tr data-state="${r.state}" data-prio="${r.priority}">
         <td><a class="cr-link" onclick="openDetail(${r.releaseId})">${r.releaseNumber}</a></td>
-        <td>${r.title}</td><td>${stateBadge(r.state)}</td>
+        <td>${r.title}</td><td>${r.moduleName||'—'}</td><td>${stateBadge(r.state)}</td>
         <td>${pendingCell(r)}</td>
         <td>${prioCell(r.priority)}</td>
         <td>${r.company||'—'}</td><td>${fmtDate(r.plannedStartDate)}</td><td>${slaStatus(r)}</td>
         <td><button class="btn btn-outline btn-sm" onclick="openDetail(${r.releaseId})">View</button></td></tr>`).join('')
-    : '<tr class="empty-row"><td colspan="9">No releases yet</td></tr>';
+    : '<tr class="empty-row"><td colspan="10">No releases yet</td></tr>';
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -2195,10 +2196,10 @@ async function renderAllReleases() {
   tbody.innerHTML = all.length
     ? all.map(r => `<tr data-state="${r.state}" data-group="${r.assignmentGroup||''}">
         <td><a class="cr-link" onclick="openDetail(${r.releaseId})">${r.releaseNumber}</a></td>
-        <td>${r.title}</td><td>${r.requestedBy||'—'}</td><td>${stateBadge(r.state)}</td>
+        <td>${r.title}</td><td>${r.moduleName||'—'}</td><td>${r.requestedBy||'—'}</td><td>${stateBadge(r.state)}</td>
         <td>${prioCell(r.priority)}</td><td>${r.assignmentGroup||'—'}</td>
         <td>${fmtDate(r.plannedStartDate)}</td></tr>`).join('')
-    : '<tr class="empty-row"><td colspan="7">No releases</td></tr>';
+    : '<tr class="empty-row"><td colspan="8">No releases</td></tr>';
 
   // Group summary cards using analytics API
   const statsRow = document.getElementById('group-stats-row');
@@ -3027,6 +3028,7 @@ async function openDetail(releaseId) {
     'dv-priority': PRIO_MAP[r.priority] || r.priority || '',
     'dv-company':  r.company          || '',
     'dv-service':  r.service          || '',
+    'dv-module':   r.moduleName       || '',
     // dv-start and dv-end removed
     'dv-ag':       r.phaseAssignmentGroup || r.assignmentGroup || '',
     'dv-at':       r.assignedTo       || '',

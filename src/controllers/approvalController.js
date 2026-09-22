@@ -670,10 +670,11 @@ async function getPendingApprovals(req, res, next) {
     const rows = await db.query(
       'SELECT ra.approval_id,ra.phase_code,ra.level_order,ra.status,'+
       'r.release_id,r.release_number,r.state,r.title,r.priority,r.planned_start_date,'+
-      'u_req.full_name AS requested_by,r.created_at '+
+      'u_req.full_name AS requested_by,r.created_at,m.module_name '+
       'FROM crms_release_approvals ra '+
       'JOIN crms_releases r ON r.release_id=ra.release_id AND r.is_deleted=0 '+
       'JOIN crms_users u_req ON u_req.user_id=r.requested_by '+
+      'LEFT JOIN crms_modules m ON m.module_id=r.module_id '+
       'WHERE ra.approver_user_id='+uid+" AND ra.status='Pending' "+fsdFilter+
       ' AND r.current_approval_level=ra.level_order '+
       "AND ((ra.phase_code='RD' AND (r.state LIKE 'RD Awaiting%' OR r.state LIKE 'RD Approval%')) "+
@@ -694,6 +695,7 @@ async function getPendingApprovals(req, res, next) {
         priority:       r.PRIORITY,
         plannedStartDate: r.PLANNED_START_DATE,
         requestedBy:    r.REQUESTED_BY,
+        moduleName:     r.MODULE_NAME || '',
         createdAt:      r.CREATED_AT,
       };
     }));
