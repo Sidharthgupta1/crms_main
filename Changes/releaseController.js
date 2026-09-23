@@ -29,6 +29,17 @@ function safeDate(d) {
 
 const TERMINAL_STATES = ['Closed','Cancelled'];
 
+// State → current sub-task phase, used to find who's actually holding a CR's
+// open sub-task right now (for "Pending With") without picking up a stale
+// assignee from a phase the CR has already moved past.
+const STATE_TO_PHASE = {
+  'RD Phase':'RD','RD Awaiting Approval L1':'RD','RD Awaiting Approval L2':'RD','RD Awaiting Approval L3':'RD',
+  'FSD Phase':'FSD','FSD Awaiting Approval L1':'FSD','FSD Awaiting Approval L2':'FSD','FSD Awaiting Approval L3':'FSD',
+  'Development Phase':'DEV','Testing Phase':'TESTING','UAT Phase':'UAT',
+  'Deployment Approval L1':'DEPLOYMENT','Deployment Approval L2':'DEPLOYMENT','Deployment Approval L3':'DEPLOYMENT',
+  'Deployment Phase':'DEPLOYMENT','DBA Deployment Phase':'DBA_DEPLOYMENT','Observation Phase':'OBSERVATION',
+};
+
 // ── Lifecycle: RD → RD Approval → FSD → FSD Approval → Dev → Testing → UAT → Deployment Approval → DBA Deployment → Observation → Closed
 const AFTER_APPROVAL = {
   RD:         'FSD Phase',
@@ -428,7 +439,12 @@ async function getAll(req, res, next) {
       'SELECT r.release_id,r.release_number,r.state,r.priority,r.title,'+
       'r.planned_start_date,r.target_end_date,r.company,r.service,r.created_at,'+
       'r.module_id,m.module_name,r.cr_owner_user_id,uco.full_name AS cr_owner_name,'+
-      'u.full_name AS requested_by,u2.full_name AS assigned_to,ag.group_name AS assignment_group '+
+      'u.full_name AS requested_by,u2.full_name AS assigned_to,ag.group_name AS assignment_group,'+
+      '(SELECT MAX(h.changed_at) FROM crms_release_history h WHERE h.release_id=r.release_id) AS phase_started_at,'+
+      // planned_start_date is never set anywhere in the UI at the CR level —
+      // fall back to the earliest sub-task planned_start_date that has one,
+      // so this column isn't permanently blank.
+      '(SELECT MIN(rt.planned_start_date) FROM crms_release_tasks rt WHERE rt.release_id=r.release_id AND rt.planned_start_date IS NOT NULL) AS task_planned_start_date '+
       'FROM crms_releases r '+
       'LEFT JOIN crms_users u  ON u.user_id=r.requested_by '+
       'LEFT JOIN crms_users u2 ON u2.user_id=r.assigned_to_user_id '+
@@ -437,8 +453,35 @@ async function getAll(req, res, next) {
       'LEFT JOIN crms_users uco   ON uco.user_id=r.cr_owner_user_id '+
       WHERE+' ORDER BY r.created_at DESC OFFSET '+offset+' ROWS FETCH NEXT '+limit+' ROWS ONLY', {}
     );
+    const camelRows = rows.map(camelizeRelease);
+
+    // "Pending With" = whoever holds the currently-open sub-task for this CR's
+    // CURRENT phase — not a phase/approval-status label. Falls back to the
+    // release-level assignee when no matching open sub-task exists yet.
+    const relIds = rows.map(function(r){ return r.RELEASE_ID; });
+    if (relIds.length) {
+      const openTasks = await db.query(
+        "SELECT rt.release_id,rt.phase_code,u.full_name AS assignee_name "+
+        "FROM crms_release_tasks rt JOIN crms_users u ON u.user_id=rt.assigned_to "+
+        "WHERE rt.release_id IN ("+relIds.join(',')+") AND rt.state<>'Closed' AND rt.assigned_to IS NOT NULL", {}
+      ).catch(function(){ return []; });
+      const openByRelease = {};
+      openTasks.forEach(function(t){
+        const rid = num(t.RELEASE_ID);
+        if (!openByRelease[rid]) openByRelease[rid] = [];
+        openByRelease[rid].push(t);
+      });
+      camelRows.forEach(function(cr, i){
+        const rid = num(rows[i].RELEASE_ID);
+        const curPhase = STATE_TO_PHASE[cr.state];
+        const tasksForRel = openByRelease[rid] || [];
+        const matched = tasksForRel.find(function(t){ return !curPhase || t.PHASE_CODE===curPhase; }) || tasksForRel[0];
+        cr.pendingWith = matched ? matched.ASSIGNEE_NAME : (cr.assignedTo || '');
+      });
+    }
+
     return res.json({
-      data: rows.map(camelizeRelease),
+      data: camelRows,
       pagination:{ page, pageSize:limit, total:Number(cRow.TOTAL), totalPages:Math.ceil(Number(cRow.TOTAL)/limit) },
     });
   } catch(err) { next(err); }
@@ -457,29 +500,52 @@ async function getOne(req, res, next) {
       'u.full_name AS requested_by,u.user_id AS requested_by_user_id,'+
       'u2.full_name AS assigned_to,u2.user_id AS assigned_to_user_id,'+
       'u3.full_name AS cr_owner_name,'+
-      'ag.group_name AS assignment_group '+
+      'ag.group_name AS assignment_group,'+
+      'm.module_name '+
       'FROM crms_releases r '+
       'LEFT JOIN crms_users u  ON u.user_id=r.requested_by '+
       'LEFT JOIN crms_users u2 ON u2.user_id=r.assigned_to_user_id '+
       'LEFT JOIN crms_users u3 ON u3.user_id=r.cr_owner_user_id '+
       'LEFT JOIN crms_assignment_groups ag ON ag.group_id=r.assignment_group_id '+
+      'LEFT JOIN crms_modules m ON m.module_id=r.module_id '+
       'WHERE r.release_id='+rid+' AND r.is_deleted=0', {}
     );
     if (!row) return res.status(404).json({ error:'Release not found' });
 
+    if (req.user.role !== 'admin') {
+      const uid = num(req.user.userId);
+      const access = await db.queryOne(
+        'SELECT 1 AS ok FROM dual WHERE '+
+        '  EXISTS (SELECT 1 FROM crms_releases rr WHERE rr.release_id='+rid+' AND ('+
+        '    rr.requested_by='+uid+' OR rr.assigned_to_user_id='+uid+' OR rr.cr_owner_user_id='+uid+
+        '    OR rr.module_id IN (SELECT DISTINCT pg.module_id FROM crms_phase_groups pg'+
+        '      WHERE pg.group_id IN (SELECT group_id FROM crms_group_members WHERE user_id='+uid+'))'+
+        '  ))'+
+        '  OR EXISTS (SELECT 1 FROM crms_release_tasks rt WHERE rt.release_id='+rid+' AND rt.assigned_to='+uid+')'+
+        '  OR EXISTS (SELECT 1 FROM crms_release_approvals ra WHERE ra.release_id='+rid+' AND ra.approver_user_id='+uid+')'+
+        '  OR EXISTS (SELECT 1 FROM crms_review_requests r2 WHERE r2.release_id='+rid+' AND (r2.reviewer_id='+uid+' OR r2.passed_to='+uid+'))',
+        {}
+      );
+      if (!access) return res.status(403).json({ error:'You do not have access to this CR' });
+    }
+
     const curLevel = Number(row.CURRENT_APPROVAL_LEVEL||0);
     let canApprove = false;
     const viewerUid = req.user ? num(req.user.userId) : '0';
+    const viewerIsAdmin = !!(req.user && req.user.role === 'admin');
     if (curLevel > 0 && row.STATE && (row.STATE.includes('Awaiting') || row.STATE.includes('Approval L'))) {
       const apprCtrl = getApprCtrl();
       const phaseCode = apprCtrl.stateToApprovalPhase
         ? apprCtrl.stateToApprovalPhase(row.STATE)
         : null;
       if (phaseCode && row.MODULE_ID && viewerUid !== '0') {
+        // Admins can approve/reject any pending level, not just ones
+        // specifically assigned to them.
         const mine = await db.queryOne(
           "SELECT approval_id FROM crms_release_approvals "+
           "WHERE release_id="+rid+" AND phase_code='"+phaseCode+"' AND level_order="+curLevel+
-          " AND approver_user_id="+viewerUid+" AND status='Pending'", {}
+          (viewerIsAdmin ? "" : " AND approver_user_id="+viewerUid) +
+          " AND status='Pending'", {}
         ).catch(function(){ return null; });
         canApprove = !!(mine);
       }
@@ -1058,10 +1124,12 @@ async function closePhaseTask(req, res, next) {
     if (missingFields.length) {
       return res.status(422).json({ error:'Cannot close — missing required field(s): '+missingFields.join(', ') });
     }
-    // Use user-provided actual_end_date if already set, otherwise use SYSDATE
-    const existingEnd = await db.queryOne('SELECT actual_end_date FROM crms_release_tasks WHERE task_id='+taskId, {});
-    const endDateExpr = (existingEnd && existingEnd.ACTUAL_END_DATE) ? 'actual_end_date' : 'SYSDATE';
-    await db.executeWithCommit('UPDATE crms_release_tasks SET state=\'Closed\',closed_by='+uid+',closed_at=SYSDATE,actual_end_date='+endDateExpr+' WHERE task_id='+taskId, {});
+    // Actual Completion Date is the date the task was actually closed —
+    // always SYSDATE here, regardless of whatever value was previously
+    // typed into the editable "Actual Completion Date" field via Save
+    // Changes. That field is for entering a date before closing is
+    // convenient; the real completion date is when Close Task is clicked.
+    await db.executeWithCommit('UPDATE crms_release_tasks SET state=\'Closed\',closed_by='+uid+',closed_at=SYSDATE,actual_end_date=SYSDATE WHERE task_id='+taskId, {});
 
     // ── UAT task closed → auto-reassign CR to CR Owner ─────────────
     if (task.PHASE_CODE === 'UAT') {
@@ -1345,7 +1413,7 @@ async function writeStateChange(rid,relNum,fromState,toState,uid,assignedUserId)
 
   // ── Update Task List phase dates (fire-and-forget) ──────────────────
   setImmediate(function() {
-    taskListCtrl.updatePhaseDate(relNum, toState, null).catch(function(){});
+    taskListCtrl.updatePhaseDate(relNum, toState, null, fromState).catch(function(){});
   });
 
   // ── Push to ServiceNow (fire-and-forget, never blocks CRMS) ─────────
@@ -1402,7 +1470,7 @@ function camelizeRelease(r) {
     summary:r.SUMMARY||'', company:r.COMPANY||'', service:r.SERVICE||'',
     requestedBy:r.REQUESTED_BY||'', assignedTo:r.ASSIGNED_TO||'',
     assignmentGroup:r.ASSIGNMENT_GROUP||'',
-    plannedStartDate:r.PLANNED_START_DATE||null,
+    plannedStartDate:r.PLANNED_START_DATE||r.TASK_PLANNED_START_DATE||null,
     targetEndDate:r.TARGET_END_DATE||null,
     moduleId:r.MODULE_ID||null,
     moduleName:r.MODULE_NAME||'',
@@ -1411,6 +1479,10 @@ function camelizeRelease(r) {
     cemli:         r.CEMLI            || '',
     smartsheetId:  r.SMARTSHEET_ID    || '',
     processName:   r.PROCESS_NAME     || '',
+    // When this CR last changed state — i.e. when it entered its CURRENT
+    // phase. Falls back to createdAt for a CR that's never transitioned
+    // (still in its very first state). Basis for phase-ageing display.
+    phaseStartedAt: r.PHASE_STARTED_AT || r.CREATED_AT || null,
     createdAt:r.CREATED_AT, updatedAt:r.UPDATED_AT,
   };
 }
