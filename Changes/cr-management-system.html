@@ -102,7 +102,7 @@
   .btn:disabled{opacity:.5;cursor:not-allowed}
 
   /* TABLE */
-  .table-wrap{background:var(--white);border-radius:var(--radius);border:1px solid var(--grey-200);overflow:hidden}
+  .table-wrap{background:var(--white);border-radius:var(--radius);border:1px solid var(--grey-200);overflow-x:auto;overflow-y:hidden}
   .table-toolbar{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--grey-200);flex-wrap:wrap}
   .search-box{display:flex;align-items:center;gap:6px;border:1.5px solid var(--grey-200);border-radius:var(--radius);padding:6px 10px;flex:1;max-width:280px}
   .search-box svg{color:var(--grey-400);width:14px;height:14px;flex-shrink:0}
@@ -1138,8 +1138,8 @@ select.tl-cell {
           <div class="page-header" style="margin-bottom:8px"><div><h2 style="font-size:15px;margin:0">Current In-Hand Tasks</h2></div></div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Phase</th><th>Status</th><th>Reported On</th><th>Task Ageing</th><th>Phase Ageing</th></tr></thead>
-              <tbody id="rr-current-tbody"><tr class="empty-row"><td colspan="10">No open tasks</td></tr></tbody>
+              <thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Phase</th><th>Status</th><th>Reported On</th><th>Planned Start Date</th><th>Plan Completion Date</th><th>Actual Start Date</th><th>Actual End Date</th><th>Task Ageing</th><th>Phase Ageing</th></tr></thead>
+              <tbody id="rr-current-tbody"><tr class="empty-row"><td colspan="14">No open tasks</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -1148,8 +1148,8 @@ select.tl-cell {
           <div class="page-header" style="margin-bottom:8px"><div><h2 id="rr-completed-title" style="font-size:15px;margin:0">Completed — Last 30 Days</h2></div></div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Phase</th><th>Reported On</th><th>Closed On</th><th>Days to Close</th><th>Status</th></tr></thead>
-              <tbody id="rr-completed-tbody"><tr class="empty-row"><td colspan="10">No completed tasks</td></tr></tbody>
+              <thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Phase</th><th>Reported On</th><th>Planned Start Date</th><th>Plan Completion Date</th><th>Actual Start Date</th><th>Actual End Date</th><th>Closed On</th><th>Days to Close</th><th>Status</th></tr></thead>
+              <tbody id="rr-completed-tbody"><tr class="empty-row"><td colspan="14">No completed tasks</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -1161,8 +1161,8 @@ select.tl-cell {
           </div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Phase</th><th>Reported On</th><th>Closed On</th><th>Days to Close</th><th>Status</th></tr></thead>
-              <tbody id="rr-alltime-tbody"><tr class="empty-row"><td colspan="10">No completed tasks</td></tr></tbody>
+              <thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Phase</th><th>Reported On</th><th>Planned Start Date</th><th>Plan Completion Date</th><th>Actual Start Date</th><th>Actual End Date</th><th>Closed On</th><th>Days to Close</th><th>Status</th></tr></thead>
+              <tbody id="rr-alltime-tbody"><tr class="empty-row"><td colspan="14">No completed tasks</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -2672,15 +2672,21 @@ async function renderResourceReport() {
       ? '<span class="badge" style="background:#fde8e8;color:#c0392b">Default</span>'
       : '<span class="badge" style="background:#e8f8ee;color:#16a34a">Non-Default</span>';
   }
+  function rrDate(v) { return v ? new Date(v).toLocaleDateString('en-IN') : '—'; }
+  function dateCells(t) {
+    return '<td>'+rrDate(t.plannedStartDate)+'</td><td>'+rrDate(t.plannedEndDate)+'</td>'+
+      '<td>'+rrDate(t.actualStartDate)+'</td><td>'+rrDate(t.actualEndDate)+'</td>';
+  }
 
   document.getElementById('rr-current-tbody').innerHTML = currentTasks.length
     ? currentTasks.map(function(t){
         return '<tr><td>'+t.resourceName+'</td><td>'+relLink(t)+'</td><td>'+(t.moduleName||'—')+'</td><td>'+(t.company||'—')+'</td>'+
           '<td>'+taskLink(t)+'</td><td>'+(t.phaseCode||'')+'</td><td>'+(t.state||'')+'</td>'+
           '<td>'+(t.reportedAt ? new Date(t.reportedAt).toLocaleDateString('en-IN') : '')+'</td>'+
+          dateCells(t)+
           '<td>'+t.taskAgeingDays+'d</td><td>'+t.phaseAgeingDays+'d</td></tr>';
       }).join('')
-    : '<tr class="empty-row"><td colspan="10">No open tasks</td></tr>';
+    : '<tr class="empty-row"><td colspan="14">No open tasks</td></tr>';
 
   var completedRowsForDisplay = (rrActiveFilter === 'default')
     ? completedLastMonth.filter(function(t){ return t.isDefault; })
@@ -2693,20 +2699,22 @@ async function renderResourceReport() {
         return '<tr><td>'+t.resourceName+'</td><td>'+relLink(t)+'</td><td>'+(t.moduleName||'—')+'</td><td>'+(t.company||'—')+'</td>'+
           '<td>'+taskLink(t)+'</td><td>'+(t.phaseCode||'')+'</td>'+
           '<td>'+(t.reportedAt ? new Date(t.reportedAt).toLocaleDateString('en-IN') : '')+'</td>'+
+          dateCells(t)+
           '<td>'+(t.closedAt ? new Date(t.closedAt).toLocaleDateString('en-IN') : '')+'</td>'+
           '<td>'+t.daysToClose+'d</td><td>'+defaultBadge(t)+'</td></tr>';
       }).join('')
-    : '<tr class="empty-row"><td colspan="10">No completed tasks</td></tr>';
+    : '<tr class="empty-row"><td colspan="14">No completed tasks</td></tr>';
 
   document.getElementById('rr-alltime-tbody').innerHTML = allTimeCompleted.length
     ? allTimeCompleted.map(function(t){
         return '<tr><td>'+t.resourceName+'</td><td>'+relLink(t)+'</td><td>'+(t.moduleName||'—')+'</td><td>'+(t.company||'—')+'</td>'+
           '<td>'+taskLink(t)+'</td><td>'+(t.phaseCode||'')+'</td>'+
           '<td>'+(t.reportedAt ? new Date(t.reportedAt).toLocaleDateString('en-IN') : '')+'</td>'+
+          dateCells(t)+
           '<td>'+(t.closedAt ? new Date(t.closedAt).toLocaleDateString('en-IN') : '')+'</td>'+
           '<td>'+t.daysToClose+'d</td><td>'+defaultBadge(t)+'</td></tr>';
       }).join('')
-    : '<tr class="empty-row"><td colspan="10">No completed tasks</td></tr>';
+    : '<tr class="empty-row"><td colspan="14">No completed tasks</td></tr>';
 
   // Section visibility follows the active KPI-tile filter; with none
   // selected, show Current + Completed(30d) side by side (the default view).
@@ -2760,18 +2768,20 @@ async function rrExportExcel() {
   );
   XLSX.utils.book_append_sheet(wb, wsMatrix, 'Ageing Matrix');
 
+  function xlDate(v) { return v ? new Date(v).toLocaleDateString('en-IN') : ''; }
+
   var wsCurrent = makeWS(
-    ['Resource','Release No.','Module','Company','Task No.','Phase','Status','Reported On','Task Ageing (d)','Phase Ageing (d)'],
+    ['Resource','Release No.','Module','Company','Task No.','Phase','Status','Reported On','Planned Start Date','Plan Completion Date','Actual Start Date','Actual End Date','Task Ageing (d)','Phase Ageing (d)'],
     d.currentTasks.map(function(t){ return [t.resourceName, t.releaseNumber||'', t.moduleName||'', t.company||'', t.taskNumber||'', t.phaseCode||'', t.state||'',
-      t.reportedAt ? new Date(t.reportedAt).toLocaleDateString('en-IN') : '', t.taskAgeingDays, t.phaseAgeingDays]; })
+      xlDate(t.reportedAt), xlDate(t.plannedStartDate), xlDate(t.plannedEndDate), xlDate(t.actualStartDate), xlDate(t.actualEndDate), t.taskAgeingDays, t.phaseAgeingDays]; })
   );
   XLSX.utils.book_append_sheet(wb, wsCurrent, 'Current In-Hand');
 
   var wsCompleted = makeWS(
-    ['Resource','Release No.','Module','Company','Task No.','Phase','Reported On','Closed On','Days To Close','Status'],
+    ['Resource','Release No.','Module','Company','Task No.','Phase','Reported On','Planned Start Date','Plan Completion Date','Actual Start Date','Actual End Date','Closed On','Days To Close','Status'],
     d.completedLastMonth.map(function(t){ return [t.resourceName, t.releaseNumber||'', t.moduleName||'', t.company||'', t.taskNumber||'', t.phaseCode||'',
-      t.reportedAt ? new Date(t.reportedAt).toLocaleDateString('en-IN') : '',
-      t.closedAt ? new Date(t.closedAt).toLocaleDateString('en-IN') : '', t.daysToClose, t.isDefault ? 'Default' : 'Non-Default']; })
+      xlDate(t.reportedAt), xlDate(t.plannedStartDate), xlDate(t.plannedEndDate), xlDate(t.actualStartDate), xlDate(t.actualEndDate),
+      xlDate(t.closedAt), t.daysToClose, t.isDefault ? 'Default' : 'Non-Default']; })
   );
   XLSX.utils.book_append_sheet(wb, wsCompleted, 'Completed (30d)');
 
@@ -2799,18 +2809,24 @@ function rrExportPDF() {
       '<td>'+r.closedAgeing0+'</td><td>'+r.closedAgeing1to3+'</td><td>'+r.closedAgeing4to20+'</td><td>'+r.closedAgeingGt20+'</td></tr>';
   }).join('') || '<tr><td colspan="11" style="text-align:center;color:#999">No data</td></tr>';
 
+  function pdfDate(v) { return v ? new Date(v).toLocaleDateString('en-IN') : '—'; }
+
   var currentRows = d.currentTasks.map(function(t){
     return '<tr><td>'+esc(t.resourceName)+'</td><td>'+esc(t.releaseNumber)+'</td><td>'+esc(t.moduleName)+'</td><td>'+esc(t.company)+'</td>'+
       '<td>'+esc(t.taskNumber)+'</td><td>'+esc(t.phaseCode)+'</td><td>'+esc(t.state)+'</td>'+
-      '<td>'+(t.reportedAt?new Date(t.reportedAt).toLocaleDateString('en-IN'):'')+'</td><td>'+t.taskAgeingDays+'d</td><td>'+t.phaseAgeingDays+'d</td></tr>';
-  }).join('') || '<tr><td colspan="10" style="text-align:center;color:#999">No open tasks</td></tr>';
+      '<td>'+(t.reportedAt?new Date(t.reportedAt).toLocaleDateString('en-IN'):'')+'</td>'+
+      '<td>'+pdfDate(t.plannedStartDate)+'</td><td>'+pdfDate(t.plannedEndDate)+'</td><td>'+pdfDate(t.actualStartDate)+'</td><td>'+pdfDate(t.actualEndDate)+'</td>'+
+      '<td>'+t.taskAgeingDays+'d</td><td>'+t.phaseAgeingDays+'d</td></tr>';
+  }).join('') || '<tr><td colspan="14" style="text-align:center;color:#999">No open tasks</td></tr>';
 
   var completedRows = d.completedLastMonth.map(function(t){
     return '<tr><td>'+esc(t.resourceName)+'</td><td>'+esc(t.releaseNumber)+'</td><td>'+esc(t.moduleName)+'</td><td>'+esc(t.company)+'</td>'+
       '<td>'+esc(t.taskNumber)+'</td><td>'+esc(t.phaseCode)+'</td>'+
-      '<td>'+(t.reportedAt?new Date(t.reportedAt).toLocaleDateString('en-IN'):'')+'</td><td>'+(t.closedAt?new Date(t.closedAt).toLocaleDateString('en-IN'):'')+'</td>'+
+      '<td>'+(t.reportedAt?new Date(t.reportedAt).toLocaleDateString('en-IN'):'')+'</td>'+
+      '<td>'+pdfDate(t.plannedStartDate)+'</td><td>'+pdfDate(t.plannedEndDate)+'</td><td>'+pdfDate(t.actualStartDate)+'</td><td>'+pdfDate(t.actualEndDate)+'</td>'+
+      '<td>'+(t.closedAt?new Date(t.closedAt).toLocaleDateString('en-IN'):'')+'</td>'+
       '<td>'+t.daysToClose+'d</td><td>'+badge(t.isDefault)+'</td></tr>';
-  }).join('') || '<tr><td colspan="10" style="text-align:center;color:#999">No completed tasks</td></tr>';
+  }).join('') || '<tr><td colspan="14" style="text-align:center;color:#999">No completed tasks</td></tr>';
 
   var win = window.open('', '_blank');
   if (!win) { toast('Pop-up blocked — please allow pop-ups to export PDF', true); return; }
@@ -2836,10 +2852,10 @@ function rrExportPDF() {
     '<th class="ageing-hdr">0 Days</th><th class="ageing-hdr">1 to 3 Days</th><th class="ageing-hdr">4 to 20 Days</th><th class="ageing-hdr">&gt;20 Days</th></tr></thead>'+
     '<tbody>'+matrixRows+'</tbody></table>'+
     '<h2>Current In-Hand Tasks</h2>'+
-    '<table><thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Phase</th><th>Status</th><th>Reported On</th><th>Task Ageing</th><th>Phase Ageing</th></tr></thead>'+
+    '<table><thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Phase</th><th>Status</th><th>Reported On</th><th>Planned Start Date</th><th>Plan Completion Date</th><th>Actual Start Date</th><th>Actual End Date</th><th>Task Ageing</th><th>Phase Ageing</th></tr></thead>'+
     '<tbody>'+currentRows+'</tbody></table>'+
     '<h2>Completed — Last 30 Days</h2>'+
-    '<table><thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Phase</th><th>Reported On</th><th>Closed On</th><th>Days to Close</th><th>Status</th></tr></thead>'+
+    '<table><thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Phase</th><th>Reported On</th><th>Planned Start Date</th><th>Plan Completion Date</th><th>Actual Start Date</th><th>Actual End Date</th><th>Closed On</th><th>Days to Close</th><th>Status</th></tr></thead>'+
     '<tbody>'+completedRows+'</tbody></table>'+
     '</body></html>');
   win.document.close();

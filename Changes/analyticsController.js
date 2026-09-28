@@ -113,7 +113,8 @@ async function getResourceReport(req, res, next) {
 
     const [currentRows, completedRows, allTimeRows] = await Promise.all([
       db.query(
-        "SELECT rt.task_id,rt.task_number,rt.phase_code,rt.state,rt.created_at,rt.planned_end_date,"+
+        "SELECT rt.task_id,rt.task_number,rt.phase_code,rt.state,rt.created_at,"+
+        "rt.planned_start_date,rt.planned_end_date,rt.actual_start_date,rt.actual_end_date,"+
         "rt.assigned_to,u.full_name AS resource_name,"+
         "r.release_id,r.release_number,r.title AS release_title,r.company,m.module_name,"+
         "(SELECT MAX(h.changed_at) FROM crms_release_history h WHERE h.release_id=r.release_id) AS phase_started_at "+
@@ -125,7 +126,8 @@ async function getResourceReport(req, res, next) {
         " ORDER BY rt.created_at DESC", {}
       ),
       db.query(
-        "SELECT rt.task_id,rt.task_number,rt.phase_code,rt.created_at,rt.closed_at,rt.planned_end_date,"+
+        "SELECT rt.task_id,rt.task_number,rt.phase_code,rt.created_at,rt.closed_at,"+
+        "rt.planned_start_date,rt.planned_end_date,rt.actual_start_date,rt.actual_end_date,"+
         "rt.assigned_to,u.full_name AS resource_name,"+
         "r.release_id,r.release_number,r.title AS release_title,r.company,m.module_name "+
         "FROM crms_release_tasks rt "+
@@ -138,7 +140,8 @@ async function getResourceReport(req, res, next) {
       // Full all-time-completed list (not just a count) so the report can
       // list/export/link every closed sub-task ever, per resource.
       db.query(
-        "SELECT rt.task_id,rt.task_number,rt.phase_code,rt.created_at,rt.closed_at,rt.planned_end_date,"+
+        "SELECT rt.task_id,rt.task_number,rt.phase_code,rt.created_at,rt.closed_at,"+
+        "rt.planned_start_date,rt.planned_end_date,rt.actual_start_date,rt.actual_end_date,"+
         "rt.assigned_to,u.full_name AS resource_name,"+
         "r.release_id,r.release_number,r.title AS release_title,r.company,m.module_name "+
         "FROM crms_release_tasks rt "+
@@ -177,7 +180,10 @@ async function getResourceReport(req, res, next) {
         reportedAt: reportedAt,
         taskAgeingDays: dayDiff(new Date(), reportedAt),
         phaseAgeingDays: dayDiff(new Date(), phaseStartedAt),
+        plannedStartDate: r.PLANNED_START_DATE || null,
         plannedEndDate: plannedEndDate,
+        actualStartDate: r.ACTUAL_START_DATE || null,
+        actualEndDate: r.ACTUAL_END_DATE || null,
         openAgeingBucket: ageingBucket(openDelayDays),
       };
     });
@@ -194,7 +200,10 @@ async function getResourceReport(req, res, next) {
         reportedAt: r.CREATED_AT, closedAt: r.CLOSED_AT,
         daysToClose: daysToClose,
         isDefault: daysToClose > DEFAULT_THRESHOLD_DAYS,
+        plannedStartDate: r.PLANNED_START_DATE || null,
         plannedEndDate: plannedEndDate,
+        actualStartDate: r.ACTUAL_START_DATE || null,
+        actualEndDate: r.ACTUAL_END_DATE || null,
         closedAgeingBucket: ageingBucket(closedDelayDays),
       };
     }
