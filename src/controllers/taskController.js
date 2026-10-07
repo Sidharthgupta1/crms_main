@@ -72,6 +72,13 @@ async function create(req, res, next) {
         "INSERT INTO crms_notifications(user_id,title,message,release_id) VALUES("+
         num(assignedToUserId)+",'New Task Assigned','"+safe(taskNum+" assigned to you on "+rel.RELEASE_NUMBER)+"',"+rid+")", {}
       );
+      // ── Email: Notify legacy task assignee (fire-and-forget) ────────
+      setImmediate(() => {
+        try {
+          const emailSvc = require('../services/emailService');
+          emailSvc.sendLegacyTaskAssigned(rid, taskId, taskNum, phase, num(assignedToUserId), shortDescription, reqBy).catch(() => {});
+        } catch (e) { logger.warn('[Email] legacy task assign', { e: e.message }); }
+      });
     }
     await db.executeWithCommit(
       "INSERT INTO crms_audit(action,performed_by,cr_number,details) VALUES("+

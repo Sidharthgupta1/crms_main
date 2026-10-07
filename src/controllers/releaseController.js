@@ -296,11 +296,15 @@ async function fullHistory(req, res, next) {
       'r.cost_saving,r.manpower_saving,r.cemli,r.smartsheet_id,r.process_name,'+
       'u_req.full_name AS requested_by,'+
       'u_at.full_name  AS assigned_to,'+
-      'ag.group_name   AS assignment_group '+
+      'u_co.full_name  AS cr_owner_name,'+
+      'ag.group_name   AS assignment_group,'+
+      'm.module_name    AS module_name '+
       'FROM crms_releases r '+
       'LEFT JOIN crms_users u_req ON u_req.user_id=r.requested_by '+
       'LEFT JOIN crms_users u_at  ON u_at.user_id=r.assigned_to_user_id '+
+      'LEFT JOIN crms_users u_co  ON u_co.user_id=r.cr_owner_user_id '+
       'LEFT JOIN crms_assignment_groups ag ON ag.group_id=r.assignment_group_id '+
+      'LEFT JOIN crms_modules m ON m.module_id=r.module_id '+
       'WHERE r.release_id='+rid+' AND r.is_deleted=0', {}
     );
     if (!rel) return res.status(404).json({ error:'Release not found' });
@@ -353,6 +357,8 @@ async function fullHistory(req, res, next) {
         service:                    rel.SERVICE||'',
         requestedBy:                rel.REQUESTED_BY,
         assignedTo:                 rel.ASSIGNED_TO||'',
+        crOwnerName:                rel.CR_OWNER_NAME||'',
+        moduleName:                 rel.MODULE_NAME||'',
         assignmentGroup:            rel.ASSIGNMENT_GROUP||'',
         plannedStartDate:           rel.PLANNED_START_DATE||null,
         targetEndDate:              rel.TARGET_END_DATE||null,
@@ -782,6 +788,15 @@ async function create(req, res, next) {
       );
     }
     logger.info('Release created', { releaseId, number:rlseNum });
+      // ── Email: Notify CR assignee (fire-and-forget) ────────────────
+      if (atVal !== 'NULL') {
+        setImmediate(() => {
+          try {
+            const emailSvc = require('../services/emailService');
+            emailSvc.sendCrAssigned(releaseId, num(assignedToUserId)).catch(() => {});
+          } catch (e) { logger.warn('[Email] cr assign', { e: e.message }); }
+        });
+      }
       // Auto-create Task List row on CR creation
       setImmediate(async function() {
         try {
@@ -993,13 +1008,10 @@ async function createPhaseTask(req, res, next) {
 
     // ── Email: Notify subtask assigned (fire-and-forget) ──────────
     if (assignedToUserId && num(assignedToUserId) !== '0') {
-      setImmediate(async () => {
+      setImmediate(() => {
         try {
-          const taskRow = await db.queryOne("SELECT task_id FROM crms_release_tasks WHERE task_number='" + taskNum + "'", {});
-          if (taskRow) {
-            const emailSvc = require('../services/emailService');
-            emailSvc.sendSubtaskAssigned(rid, num(taskRow.TASK_ID), phaseCode, num(assignedToUserId), uid).catch(() => {});
-          }
+          const emailSvc = require('../services/emailService');
+          emailSvc.sendSubtaskAssigned(rid, taskNum, phaseCode, num(assignedToUserId), uid, shortDescription).catch(() => {});
         } catch (e) { logger.warn('[Email] subtask assign', { e: e.message }); }
       });
     }
@@ -1055,7 +1067,7 @@ async function updatePhaseTask(req, res, next) {
     const taskId = num(req.params.taskId);
     const uid    = num(req.user.userId);
     const task   = await db.queryOne(
-      "SELECT rt.task_id,rt.state,rt.assigned_to,r.requested_by,r.assigned_to_user_id AS release_assignee "+
+      "SELECT rt.task_id,rt.task_number,rt.state,rt.assigned_to,rt.phase_code,rt.short_description,r.requested_by,r.assigned_to_user_id AS release_assignee "+
       "FROM crms_release_tasks rt JOIN crms_releases r ON r.release_id=rt.release_id "+
       "WHERE rt.task_id="+taskId+" AND rt.release_id="+rid, {}
     );
@@ -1085,6 +1097,13 @@ async function updatePhaseTask(req, res, next) {
     if (assignedToUserId && num(assignedToUserId) !== num(task.ASSIGNED_TO)) {
       const rel = await db.queryOne('SELECT release_number FROM crms_releases WHERE release_id='+rid, {});
       await db.executeWithCommit("INSERT INTO crms_notifications(user_id,title,message,release_id) VALUES("+num(assignedToUserId)+",'Sub-Task Reassigned','"+safe('You have been assigned a sub-task on '+(rel?rel.RELEASE_NUMBER:''))+"',"+rid+")", {});
+      // ── Email: Notify sub-task reassignment (fire-and-forget) ──────
+      setImmediate(() => {
+        try {
+          const emailSvc = require('../services/emailService');
+          emailSvc.sendSubtaskReassigned(rid, task.TASK_NUMBER, task.PHASE_CODE, num(assignedToUserId), task.SHORT_DESCRIPTION, uid).catch(() => {});
+        } catch (e) { logger.warn('[Email] subtask reassign', { e: e.message }); }
+      });
     }
     return res.json({ message:'Task updated' });
   } catch(err) { logger.error("updatePhaseTask error: "+err.message, { taskId: req.params.taskId }); next(err); }
@@ -1108,7 +1127,7 @@ async function closePhaseTask(req, res, next) {
     const rid    = num(req.params.releaseId);
     const taskId = num(req.params.taskId);
     const uid    = num(req.user.userId);
-    const task   = await db.queryOne("SELECT task_id,phase_code,assigned_to,assignment_group_id,planned_start_date,planned_end_date,state,upload_attachment_id FROM crms_release_tasks WHERE task_id="+taskId+" AND release_id="+rid, {});
+    const task   = await db.queryOne("SELECT task_id,phase_code,short_description,assigned_to,assignment_group_id,planned_start_date,planned_end_date,state,upload_attachment_id FROM crms_release_tasks WHERE task_id="+taskId+" AND release_id="+rid, {});
     if (!task) return res.status(404).json({ error:'Task not found' });
     if (task.STATE==='Closed') return res.status(400).json({ error:'Task already closed' });
     // Allow: admin, assigned person, or CR owner/assignee
@@ -1143,6 +1162,15 @@ async function closePhaseTask(req, res, next) {
             ' WHERE release_id='+rid, {}
           );
           logger.info('CR reassigned to CR Owner after UAT close', { rid, crOwnerUserId: crOwnerRow.CR_OWNER_USER_ID });
+          const crOwnerUid = num(crOwnerRow.CR_OWNER_USER_ID);
+          await db.executeWithCommit("INSERT INTO crms_notifications(user_id,title,message,release_id) VALUES("+crOwnerUid+",'CR Reassigned to You','"+safe('UAT closed — CR automatically reassigned to you as CR Owner')+"',"+rid+")", {});
+          // ── Email: Notify CR Owner of auto-reassignment (fire-and-forget) ──
+          setImmediate(() => {
+            try {
+              const emailSvc = require('../services/emailService');
+              emailSvc.sendCrAssigned(rid, crOwnerUid).catch(() => {});
+            } catch (e) { logger.warn('[Email] uat auto-reassign', { e: e.message }); }
+          });
         }
       } catch(e) { logger.warn('UAT close reassign failed', {e:e.message}); }
     }
@@ -1161,7 +1189,7 @@ async function closePhaseTask(req, res, next) {
     setImmediate(() => {
       try {
         const emailSvc = require('../services/emailService');
-        emailSvc.sendSubtaskCompleted(rid, taskId, task.PHASE_CODE, uid).catch(() => {});
+        emailSvc.sendSubtaskCompleted(rid, taskId, task.PHASE_CODE, uid, task.SHORT_DESCRIPTION).catch(() => {});
       } catch (e) { logger.warn('[Email] require failed', { e: e.message }); }
     });
 
@@ -1258,6 +1286,13 @@ async function reassign(req, res, next) {
     await db.executeWithCommit('UPDATE crms_releases SET assigned_to_user_id='+num(assignedToUserId)+',updated_at=SYSDATE WHERE release_id='+rid, {});
     if (uid && uid !== '0') await db.executeWithCommit("INSERT INTO crms_audit(action,performed_by,cr_number,details) VALUES('Reassign',"+uid+",'"+release.RELEASE_NUMBER+"','Assigned to "+safe(newName)+"')", {});
     await db.executeWithCommit("INSERT INTO crms_notifications(user_id,title,message,release_id) VALUES("+num(assignedToUserId)+",'Release Assigned to You','"+safe(release.RELEASE_NUMBER+' assigned to you')+"',"+rid+")", {});
+    // ── Email: Notify CR reassignment (fire-and-forget) ──────────────
+    setImmediate(() => {
+      try {
+        const emailSvc = require('../services/emailService');
+        emailSvc.sendCrAssigned(rid, num(assignedToUserId)).catch(() => {});
+      } catch (e) { logger.warn('[Email] cr reassign', { e: e.message }); }
+    });
     return res.json({ message:'Reassigned to '+newName });
   } catch(err) { next(err); }
 }

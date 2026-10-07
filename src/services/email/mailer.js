@@ -1,9 +1,9 @@
 'use strict';
 
-const graphClient = require('./graphClient');
+const smtpMailClient = require('./smtpMailClient');
 const logger = require('../../config/logger');
 
-async function sendEmail(to, subject, htmlBody) {
+async function sendEmail(to, subject, htmlBody, cc) {
   if (!to || !to.length) {
     logger.warn('[Mailer] No recipients — skipping');
     return { success: false, error: 'No recipients' };
@@ -14,10 +14,11 @@ async function sendEmail(to, subject, htmlBody) {
     logger.warn('[Mailer] No valid email addresses — skipping', { original: recipients });
     return { success: false, error: 'No valid email addresses' };
   }
-  const result = await graphClient.sendEmail({
+  const result = await smtpMailClient.sendEmail({
     subject,
     htmlBody,
     to: validRecipients,
+    cc: cc || null,
   });
   if (!result.success) {
     logger.error('[Mailer] Failed to send email', {

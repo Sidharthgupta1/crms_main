@@ -1134,12 +1134,44 @@ select.tl-cell {
           </table>
         </div>
 
+        <div id="rr-section-bandwidth" style="margin-bottom:24px">
+          <div class="page-header" style="margin-bottom:8px"><div><h2 style="font-size:15px;margin:0">Resource Bandwidth</h2><p style="margin:2px 0 0;font-size:12px;color:var(--grey-500)">Open FSD, Testing and UAT tasks only, projected by week and by month. Click a name or a bucket to see the tasks behind it.</p></div></div>
+          <div class="table-wrap" style="margin-bottom:14px;overflow-x:auto">
+            <table class="grid-table">
+              <thead><tr id="rrbw-week-head"></tr></thead>
+              <tbody id="rrbw-week-body"><tr class="empty-row"><td colspan="5">No data</td></tr></tbody>
+            </table>
+          </div>
+          <div class="table-wrap" style="margin-bottom:14px;overflow-x:auto">
+            <table class="grid-table">
+              <thead><tr id="rrbw-month-head"></tr></thead>
+              <tbody id="rrbw-month-body"><tr class="empty-row"><td colspan="4">No data</td></tr></tbody>
+            </table>
+          </div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--grey-500);margin-bottom:14px">
+            <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#0ca30c;display:inline-block"></span>Free — 0</span>
+            <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#fab219;display:inline-block"></span>Moderate — 1 to 2</span>
+            <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#ec835a;display:inline-block"></span>Loaded — 3 to 4</span>
+            <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#d03b3b;display:inline-block"></span>Overloaded — 5+</span>
+          </div>
+          <div id="rrbw-detail" style="display:none;background:var(--white);border:1px solid var(--grey-200);border-radius:var(--radius);padding:14px 18px;margin-bottom:0">
+            <div id="rrbw-detail-title" style="font-size:14px;font-weight:700;margin-bottom:2px"></div>
+            <div id="rrbw-detail-sub" style="font-size:12px;color:var(--grey-500);margin-bottom:10px"></div>
+            <div class="table-wrap" style="overflow-x:auto">
+              <table class="grid-table">
+                <thead><tr><th>Resource</th><th>Task No.</th><th>Task Title</th><th>Release No.</th><th>Module</th><th>Company</th><th>Requested By</th><th>Phase</th><th>Status</th><th>Reported On</th><th>Planned Start Date</th><th>Plan Completion Date</th><th>Actual Start Date</th><th>Actual End Date</th><th>Task Ageing</th><th>Phase Ageing</th></tr></thead>
+                <tbody id="rrbw-detail-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
         <div id="rr-section-current" style="margin-bottom:24px">
           <div class="page-header" style="margin-bottom:8px"><div><h2 style="font-size:15px;margin:0">Current In-Hand Tasks</h2></div></div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Phase</th><th>Status</th><th>Reported On</th><th>Planned Start Date</th><th>Plan Completion Date</th><th>Actual Start Date</th><th>Actual End Date</th><th>Task Ageing</th><th>Phase Ageing</th></tr></thead>
-              <tbody id="rr-current-tbody"><tr class="empty-row"><td colspan="14">No open tasks</td></tr></tbody>
+              <thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Task Title</th><th>Phase</th><th>Status</th><th>Reported On</th><th>Planned Start Date</th><th>Plan Completion Date</th><th>Actual Start Date</th><th>Actual End Date</th><th>Task Ageing</th><th>Phase Ageing</th></tr></thead>
+              <tbody id="rr-current-tbody"><tr class="empty-row"><td colspan="15">No open tasks</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -1148,8 +1180,8 @@ select.tl-cell {
           <div class="page-header" style="margin-bottom:8px"><div><h2 id="rr-completed-title" style="font-size:15px;margin:0">Completed — Last 30 Days</h2></div></div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Phase</th><th>Reported On</th><th>Planned Start Date</th><th>Plan Completion Date</th><th>Actual Start Date</th><th>Actual End Date</th><th>Closed On</th><th>Days to Close</th><th>Status</th></tr></thead>
-              <tbody id="rr-completed-tbody"><tr class="empty-row"><td colspan="14">No completed tasks</td></tr></tbody>
+              <thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Task Title</th><th>Phase</th><th>Reported On</th><th>Planned Start Date</th><th>Plan Completion Date</th><th>Actual Start Date</th><th>Actual End Date</th><th>Closed On</th><th>Days to Close</th><th>Status</th></tr></thead>
+              <tbody id="rr-completed-tbody"><tr class="empty-row"><td colspan="15">No completed tasks</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -1161,8 +1193,8 @@ select.tl-cell {
           </div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Phase</th><th>Reported On</th><th>Planned Start Date</th><th>Plan Completion Date</th><th>Actual Start Date</th><th>Actual End Date</th><th>Closed On</th><th>Days to Close</th><th>Status</th></tr></thead>
-              <tbody id="rr-alltime-tbody"><tr class="empty-row"><td colspan="14">No completed tasks</td></tr></tbody>
+              <thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Task Title</th><th>Phase</th><th>Reported On</th><th>Planned Start Date</th><th>Plan Completion Date</th><th>Actual Start Date</th><th>Actual End Date</th><th>Closed On</th><th>Days to Close</th><th>Status</th></tr></thead>
+              <tbody id="rr-alltime-tbody"><tr class="empty-row"><td colspan="15">No completed tasks</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -1673,6 +1705,16 @@ const API_BASE = (function () {
   return l.protocol + '//' + l.hostname + port + '/api/v1';
 })();
 
+// ── Deep link from email (?openRelease=<id>) ───────────────────────────
+// Captured before login so it survives the auth screen; consumed once in
+// afterLogin() below, then stripped from the URL so a refresh doesn't reopen it.
+var _pendingOpenReleaseId = (function () {
+  try {
+    var v = new URLSearchParams(window.location.search).get('openRelease');
+    return v ? v : null;
+  } catch (e) { return null; }
+})();
+
 // ── Constants (UI only — no data stored here) ─────────────────────────
 const STATES = [
   'Draft',
@@ -1995,6 +2037,17 @@ async function afterLogin(user) {
   checkReviewerStatus();
   setTimeout(initUIEnhancements, 300);
   resetIdleTimer();
+
+  // Deep link from an email "Click here to open it" button
+  if (_pendingOpenReleaseId) {
+    var rid = _pendingOpenReleaseId;
+    _pendingOpenReleaseId = null;
+    try {
+      var cleanUrl = window.location.pathname + window.location.hash;
+      window.history.replaceState({}, document.title, cleanUrl);
+    } catch (e) {}
+    openDetail(rid);
+  }
 }
 
 async function doLogout(clearFields) {
@@ -2614,6 +2667,12 @@ async function rrOpenTask(releaseId, taskId) {
   if (taskId) openSubTaskDetail(taskId);
 }
 
+// Top-level (not nested in renderResourceReport) so rrbwTaskRow — used by
+// every Resource Bandwidth drill-down — can call them too.
+function relLink(t) { return '<a class="cr-link" onclick="rrOpenRelease('+t.releaseId+')">'+(t.releaseNumber||'')+'</a>'; }
+function taskLink(t) { return '<a class="cr-link" onclick="rrOpenTask('+t.releaseId+','+t.taskId+')">'+(t.taskNumber||'')+'</a>'; }
+function rrDate(v) { return v ? new Date(v).toLocaleDateString('en-IN') : '—'; }
+
 async function renderResourceReport() {
   var resourceId = (document.getElementById('rr-resource') || {}).value || '';
   var moduleId   = (document.getElementById('rr-module')   || {}).value || '';
@@ -2665,14 +2724,12 @@ async function renderResourceReport() {
       }).join('')
     : '<tr class="empty-row"><td colspan="11">No data</td></tr>';
 
-  function relLink(t) { return '<a class="cr-link" onclick="rrOpenRelease('+t.releaseId+')">'+(t.releaseNumber||'')+'</a>'; }
-  function taskLink(t) { return '<a class="cr-link" onclick="rrOpenTask('+t.releaseId+','+t.taskId+')">'+(t.taskNumber||'')+'</a>'; }
   function defaultBadge(t) {
     return t.isDefault
       ? '<span class="badge" style="background:#fde8e8;color:#c0392b">Default</span>'
       : '<span class="badge" style="background:#e8f8ee;color:#16a34a">Non-Default</span>';
   }
-  function rrDate(v) { return v ? new Date(v).toLocaleDateString('en-IN') : '—'; }
+  function taskTitleCell(t) { return '<td>'+(t.taskTitle||'—')+'</td>'; }
   function dateCells(t) {
     return '<td>'+rrDate(t.plannedStartDate)+'</td><td>'+rrDate(t.plannedEndDate)+'</td>'+
       '<td>'+rrDate(t.actualStartDate)+'</td><td>'+rrDate(t.actualEndDate)+'</td>';
@@ -2681,12 +2738,12 @@ async function renderResourceReport() {
   document.getElementById('rr-current-tbody').innerHTML = currentTasks.length
     ? currentTasks.map(function(t){
         return '<tr><td>'+t.resourceName+'</td><td>'+relLink(t)+'</td><td>'+(t.moduleName||'—')+'</td><td>'+(t.company||'—')+'</td>'+
-          '<td>'+taskLink(t)+'</td><td>'+(t.phaseCode||'')+'</td><td>'+(t.state||'')+'</td>'+
+          '<td>'+taskLink(t)+'</td>'+taskTitleCell(t)+'<td>'+(t.phaseCode||'')+'</td><td>'+(t.state||'')+'</td>'+
           '<td>'+(t.reportedAt ? new Date(t.reportedAt).toLocaleDateString('en-IN') : '')+'</td>'+
           dateCells(t)+
           '<td>'+t.taskAgeingDays+'d</td><td>'+t.phaseAgeingDays+'d</td></tr>';
       }).join('')
-    : '<tr class="empty-row"><td colspan="14">No open tasks</td></tr>';
+    : '<tr class="empty-row"><td colspan="15">No open tasks</td></tr>';
 
   var completedRowsForDisplay = (rrActiveFilter === 'default')
     ? completedLastMonth.filter(function(t){ return t.isDefault; })
@@ -2697,24 +2754,24 @@ async function renderResourceReport() {
   document.getElementById('rr-completed-tbody').innerHTML = completedRowsForDisplay.length
     ? completedRowsForDisplay.map(function(t){
         return '<tr><td>'+t.resourceName+'</td><td>'+relLink(t)+'</td><td>'+(t.moduleName||'—')+'</td><td>'+(t.company||'—')+'</td>'+
-          '<td>'+taskLink(t)+'</td><td>'+(t.phaseCode||'')+'</td>'+
+          '<td>'+taskLink(t)+'</td>'+taskTitleCell(t)+'<td>'+(t.phaseCode||'')+'</td>'+
           '<td>'+(t.reportedAt ? new Date(t.reportedAt).toLocaleDateString('en-IN') : '')+'</td>'+
           dateCells(t)+
           '<td>'+(t.closedAt ? new Date(t.closedAt).toLocaleDateString('en-IN') : '')+'</td>'+
           '<td>'+t.daysToClose+'d</td><td>'+defaultBadge(t)+'</td></tr>';
       }).join('')
-    : '<tr class="empty-row"><td colspan="14">No completed tasks</td></tr>';
+    : '<tr class="empty-row"><td colspan="15">No completed tasks</td></tr>';
 
   document.getElementById('rr-alltime-tbody').innerHTML = allTimeCompleted.length
     ? allTimeCompleted.map(function(t){
         return '<tr><td>'+t.resourceName+'</td><td>'+relLink(t)+'</td><td>'+(t.moduleName||'—')+'</td><td>'+(t.company||'—')+'</td>'+
-          '<td>'+taskLink(t)+'</td><td>'+(t.phaseCode||'')+'</td>'+
+          '<td>'+taskLink(t)+'</td>'+taskTitleCell(t)+'<td>'+(t.phaseCode||'')+'</td>'+
           '<td>'+(t.reportedAt ? new Date(t.reportedAt).toLocaleDateString('en-IN') : '')+'</td>'+
           dateCells(t)+
           '<td>'+(t.closedAt ? new Date(t.closedAt).toLocaleDateString('en-IN') : '')+'</td>'+
           '<td>'+t.daysToClose+'d</td><td>'+defaultBadge(t)+'</td></tr>';
       }).join('')
-    : '<tr class="empty-row"><td colspan="14">No completed tasks</td></tr>';
+    : '<tr class="empty-row"><td colspan="15">No completed tasks</td></tr>';
 
   // Section visibility follows the active KPI-tile filter; with none
   // selected, show Current + Completed(30d) side by side (the default view).
@@ -2731,6 +2788,117 @@ async function renderResourceReport() {
     completedLastMonth: completedLastMonth,
     allTimeCompleted: allTimeCompleted,
   };
+
+  renderResourceBandwidth(resourceId, moduleId, company);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// RESOURCE BANDWIDTH — heatmap of open FSD/Testing/UAT load by week/month
+// ══════════════════════════════════════════════════════════════════════
+function rrbwStatusColors(n) {
+  if (n === 0) return { bg: '#0ca30c', fg: '#ffffff' };
+  if (n <= 2)  return { bg: '#fab219', fg: '#3d2e00' };
+  if (n <= 4)  return { bg: '#ec835a', fg: '#ffffff' };
+  return { bg: '#d03b3b', fg: '#ffffff' };
+}
+async function renderResourceBandwidth(resourceId, moduleId, company) {
+  resourceId = resourceId || '';
+  var url = '/analytics/resource-bandwidth?';
+  if (moduleId) url += 'moduleId=' + moduleId + '&';
+  if (company)  url += 'company='  + encodeURIComponent(company) + '&';
+
+  var data = await GET(url);
+  if (!data) return;
+
+  // Same rr-resource/rr-module/rr-company filter row as the rest of this
+  // page: moduleId/company are applied server-side (above); resourceId is
+  // filtered client-side here, same as renderResourceReport() does for its
+  // own tables — so selecting one resource filters every section together.
+  var resources = (data.resources || []).filter(function(r) { return !resourceId || String(r.userId) === resourceId; });
+  var tasks = (data.tasks || []).filter(function(t) { return !resourceId || String(t.resourceUserId) === resourceId; });
+  window._rrbwData = { weekBuckets: data.weekBuckets, monthBuckets: data.monthBuckets, resources: resources, tasks: tasks };
+
+  var weekBuckets = data.weekBuckets || [];
+  var monthBuckets = data.monthBuckets || [];
+
+  function cell(n, kind, idx, userId, name) {
+    var c = rrbwStatusColors(n);
+    return '<td style="text-align:center;padding:8px"><span style="display:inline-block;min-width:28px;padding:3px 0;border-radius:6px;background:'+c.bg+';color:'+c.fg+';font-size:13px;font-weight:700;cursor:pointer" '+
+      'onclick="rrbwShowByCell(\''+kind+'\','+idx+',\''+userId+'\',\''+String(name).replace(/'/g,"\\'")+'\')" title="Show the task(s) behind this number">'+n+'</span></td>';
+  }
+  function nameCell(name, userId) {
+    return '<td><a class="cr-link" onclick="rrbwShowByResource(\''+userId+'\',\''+String(name).replace(/'/g,"\\'")+'\')" title="Show every open task for this resource, all phases">'+name+'</a></td>';
+  }
+  function headTh(label, range, onclick) {
+    return '<th style="cursor:pointer;text-align:center" onclick="'+onclick+'" title="'+range+'">'+label+'</th>';
+  }
+
+  document.getElementById('rrbw-week-head').innerHTML = '<th>Resource</th>' +
+    weekBuckets.map(function(b, i) { return headTh(b.label, b.range, 'rrbwShowByBucket(\'week\','+i+')'); }).join('');
+  document.getElementById('rrbw-week-body').innerHTML = resources.length
+    ? resources.map(function(r) { return '<tr>'+nameCell(r.name, r.userId)+r.weekCounts.map(function(n, i) { return cell(n, 'week', i, r.userId, r.name); }).join('')+'</tr>'; }).join('')
+    : '<tr class="empty-row"><td colspan="5">No open FSD, Testing or UAT tasks</td></tr>';
+
+  document.getElementById('rrbw-month-head').innerHTML = '<th>Resource</th>' +
+    monthBuckets.map(function(b, i) { return headTh(b.label, b.range, 'rrbwShowByBucket(\'month\','+i+')'); }).join('');
+  document.getElementById('rrbw-month-body').innerHTML = resources.length
+    ? resources.map(function(r) { return '<tr>'+nameCell(r.name, r.userId)+r.monthCounts.map(function(n, i) { return cell(n, 'month', i, r.userId, r.name); }).join('')+'</tr>'; }).join('')
+    : '<tr class="empty-row"><td colspan="4">No open FSD, Testing or UAT tasks</td></tr>';
+}
+
+function rrbwTaskRow(t) {
+  return '<tr><td>'+(t.resourceName||'—')+'</td><td>'+taskLink(t)+'</td><td>'+(t.taskTitle||'—')+'</td><td>'+relLink(t)+'</td><td>'+(t.moduleName||'—')+'</td><td>'+(t.company||'—')+'</td>'+
+    '<td>'+(t.requestedBy||'—')+'</td>'+
+    '<td>'+(t.phaseCode||'')+'</td><td>'+(t.state||'')+'</td>'+
+    '<td>'+(t.reportedAt ? new Date(t.reportedAt).toLocaleDateString('en-IN') : '')+'</td>'+
+    '<td>'+rrDate(t.plannedStartDate)+'</td><td>'+rrDate(t.plannedEndDate)+'</td><td>'+rrDate(t.actualStartDate)+'</td><td>'+rrDate(t.actualEndDate)+'</td>'+
+    '<td>'+(t.taskAgeingDays != null ? t.taskAgeingDays+'d' : '—')+'</td><td>'+(t.phaseAgeingDays != null ? t.phaseAgeingDays+'d' : '—')+'</td></tr>';
+}
+function rrbwRenderDetail(title, sub, list) {
+  document.getElementById('rrbw-detail-title').textContent = title;
+  document.getElementById('rrbw-detail-sub').textContent = sub;
+  document.getElementById('rrbw-detail-body').innerHTML = list.length
+    ? list.map(rrbwTaskRow).join('')
+    : '<tr class="empty-row"><td colspan="16">No open tasks</td></tr>';
+  document.getElementById('rrbw-detail').style.display = 'block';
+  document.getElementById('rrbw-detail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+function rrbwShowByResource(userId, name) {
+  // All phases, not just FSD/Testing/UAT — the point of clicking a name is
+  // "what is this person actually holding", their full plate.
+  var list = ((window._rrExportData || {}).currentTasks || []).filter(function(t) { return String(t.resourceUserId) === String(userId); });
+  rrbwRenderDetail('Open tasks — ' + name, list.length + ' open task' + (list.length === 1 ? '' : 's') + ', all phases', list);
+}
+function rrbwShowByBucket(kind, idx) {
+  var data = window._rrbwData;
+  if (!data) return;
+  var bucket = (kind === 'week' ? data.weekBuckets : data.monthBuckets)[idx];
+  if (!bucket) return;
+  var from = new Date(bucket.from), to = new Date(bucket.to);
+  var list = (data.tasks || []).filter(function(t) {
+    var s = new Date(t.plannedStartDate);
+    var e = t.plannedEndDate ? new Date(t.plannedEndDate) : s;
+    return s <= to && e >= from;
+  });
+  rrbwRenderDetail('Open tasks — ' + bucket.label + ' (' + bucket.range + ')',
+    list.length + ' task' + (list.length === 1 ? '' : 's') + ' overlapping this range, FSD/Testing/UAT, across all resources', list);
+}
+function rrbwShowByCell(kind, idx, userId, name) {
+  // The exact task(s) behind one resource × bucket intersection — the
+  // specific number the user clicked on in the heatmap.
+  var data = window._rrbwData;
+  if (!data) return;
+  var bucket = (kind === 'week' ? data.weekBuckets : data.monthBuckets)[idx];
+  if (!bucket) return;
+  var from = new Date(bucket.from), to = new Date(bucket.to);
+  var list = (data.tasks || []).filter(function(t) {
+    if (String(t.resourceUserId) !== String(userId)) return false;
+    var s = new Date(t.plannedStartDate);
+    var e = t.plannedEndDate ? new Date(t.plannedEndDate) : s;
+    return s <= to && e >= from;
+  });
+  rrbwRenderDetail('Open tasks — ' + name + ', ' + bucket.label + ' (' + bucket.range + ')',
+    list.length + ' task' + (list.length === 1 ? '' : 's') + ' overlapping this range, FSD/Testing/UAT', list);
 }
 
 // Both export options produce the SAME content — the full report exactly
@@ -2768,22 +2936,45 @@ async function rrExportExcel() {
   );
   XLSX.utils.book_append_sheet(wb, wsMatrix, 'Ageing Matrix');
 
+  var bw = window._rrbwData;
+  if (bw) {
+    var wsBwWeek = makeWS(
+      ['Resource'].concat((bw.weekBuckets||[]).map(function(b){ return b.label+' ('+b.range+')'; })),
+      (bw.resources||[]).map(function(r){ return [r.name].concat(r.weekCounts); })
+    );
+    XLSX.utils.book_append_sheet(wb, wsBwWeek, 'Bandwidth (Week)');
+
+    var wsBwMonth = makeWS(
+      ['Resource'].concat((bw.monthBuckets||[]).map(function(b){ return b.label+' ('+b.range+')'; })),
+      (bw.resources||[]).map(function(r){ return [r.name].concat(r.monthCounts); })
+    );
+    XLSX.utils.book_append_sheet(wb, wsBwMonth, 'Bandwidth (Month)');
+  }
+
   function xlDate(v) { return v ? new Date(v).toLocaleDateString('en-IN') : ''; }
 
   var wsCurrent = makeWS(
-    ['Resource','Release No.','Module','Company','Task No.','Phase','Status','Reported On','Planned Start Date','Plan Completion Date','Actual Start Date','Actual End Date','Task Ageing (d)','Phase Ageing (d)'],
-    d.currentTasks.map(function(t){ return [t.resourceName, t.releaseNumber||'', t.moduleName||'', t.company||'', t.taskNumber||'', t.phaseCode||'', t.state||'',
+    ['Resource','Release No.','Module','Company','Task No.','Task Title','Phase','Status','Reported On','Planned Start Date','Plan Completion Date','Actual Start Date','Actual End Date','Task Ageing (d)','Phase Ageing (d)'],
+    d.currentTasks.map(function(t){ return [t.resourceName, t.releaseNumber||'', t.moduleName||'', t.company||'', t.taskNumber||'', t.taskTitle||'', t.phaseCode||'', t.state||'',
       xlDate(t.reportedAt), xlDate(t.plannedStartDate), xlDate(t.plannedEndDate), xlDate(t.actualStartDate), xlDate(t.actualEndDate), t.taskAgeingDays, t.phaseAgeingDays]; })
   );
   XLSX.utils.book_append_sheet(wb, wsCurrent, 'Current In-Hand');
 
   var wsCompleted = makeWS(
-    ['Resource','Release No.','Module','Company','Task No.','Phase','Reported On','Planned Start Date','Plan Completion Date','Actual Start Date','Actual End Date','Closed On','Days To Close','Status'],
-    d.completedLastMonth.map(function(t){ return [t.resourceName, t.releaseNumber||'', t.moduleName||'', t.company||'', t.taskNumber||'', t.phaseCode||'',
+    ['Resource','Release No.','Module','Company','Task No.','Task Title','Phase','Reported On','Planned Start Date','Plan Completion Date','Actual Start Date','Actual End Date','Closed On','Days To Close','Status'],
+    d.completedLastMonth.map(function(t){ return [t.resourceName, t.releaseNumber||'', t.moduleName||'', t.company||'', t.taskNumber||'', t.taskTitle||'', t.phaseCode||'',
       xlDate(t.reportedAt), xlDate(t.plannedStartDate), xlDate(t.plannedEndDate), xlDate(t.actualStartDate), xlDate(t.actualEndDate),
       xlDate(t.closedAt), t.daysToClose, t.isDefault ? 'Default' : 'Non-Default']; })
   );
   XLSX.utils.book_append_sheet(wb, wsCompleted, 'Completed (30d)');
+
+  var wsAllTime = makeWS(
+    ['Resource','Release No.','Module','Company','Task No.','Task Title','Phase','Reported On','Planned Start Date','Plan Completion Date','Actual Start Date','Actual End Date','Closed On','Days To Close','Status'],
+    d.allTimeCompleted.map(function(t){ return [t.resourceName, t.releaseNumber||'', t.moduleName||'', t.company||'', t.taskNumber||'', t.taskTitle||'', t.phaseCode||'',
+      xlDate(t.reportedAt), xlDate(t.plannedStartDate), xlDate(t.plannedEndDate), xlDate(t.actualStartDate), xlDate(t.actualEndDate),
+      xlDate(t.closedAt), t.daysToClose, t.isDefault ? 'Default' : 'Non-Default']; })
+  );
+  XLSX.utils.book_append_sheet(wb, wsAllTime, 'All-Time Completed');
 
   try {
     var fname = 'resource_report_'+new Date().toISOString().slice(0,10)+'.xlsx';
@@ -2809,24 +3000,46 @@ function rrExportPDF() {
       '<td>'+r.closedAgeing0+'</td><td>'+r.closedAgeing1to3+'</td><td>'+r.closedAgeing4to20+'</td><td>'+r.closedAgeingGt20+'</td></tr>';
   }).join('') || '<tr><td colspan="11" style="text-align:center;color:#999">No data</td></tr>';
 
+  var bw = window._rrbwData;
+  function bwColor(n) {
+    if (n === 0) return { bg: '#0ca30c', fg: '#ffffff' };
+    if (n <= 2)  return { bg: '#fab219', fg: '#3d2e00' };
+    if (n <= 4)  return { bg: '#ec835a', fg: '#ffffff' };
+    return { bg: '#d03b3b', fg: '#ffffff' };
+  }
+  function bwCell(n) { var c = bwColor(n); return '<td style="text-align:center;background:'+c.bg+';color:'+c.fg+';font-weight:700">'+n+'</td>'; }
+  var bwWeekHead = '<th>Resource</th>' + ((bw && bw.weekBuckets) || []).map(function(b){ return '<th>'+esc(b.label)+' ('+esc(b.range)+')</th>'; }).join('');
+  var bwWeekRows = ((bw && bw.resources) || []).map(function(r){ return '<tr><td>'+esc(r.name)+'</td>'+r.weekCounts.map(bwCell).join('')+'</tr>'; }).join('') || '<tr><td colspan="5" style="text-align:center;color:#999">No open FSD, Testing or UAT tasks</td></tr>';
+  var bwMonthHead = '<th>Resource</th>' + ((bw && bw.monthBuckets) || []).map(function(b){ return '<th>'+esc(b.label)+' ('+esc(b.range)+')</th>'; }).join('');
+  var bwMonthRows = ((bw && bw.resources) || []).map(function(r){ return '<tr><td>'+esc(r.name)+'</td>'+r.monthCounts.map(bwCell).join('')+'</tr>'; }).join('') || '<tr><td colspan="4" style="text-align:center;color:#999">No open FSD, Testing or UAT tasks</td></tr>';
+
   function pdfDate(v) { return v ? new Date(v).toLocaleDateString('en-IN') : '—'; }
 
   var currentRows = d.currentTasks.map(function(t){
     return '<tr><td>'+esc(t.resourceName)+'</td><td>'+esc(t.releaseNumber)+'</td><td>'+esc(t.moduleName)+'</td><td>'+esc(t.company)+'</td>'+
-      '<td>'+esc(t.taskNumber)+'</td><td>'+esc(t.phaseCode)+'</td><td>'+esc(t.state)+'</td>'+
+      '<td>'+esc(t.taskNumber)+'</td><td>'+esc(t.taskTitle)+'</td><td>'+esc(t.phaseCode)+'</td><td>'+esc(t.state)+'</td>'+
       '<td>'+(t.reportedAt?new Date(t.reportedAt).toLocaleDateString('en-IN'):'')+'</td>'+
       '<td>'+pdfDate(t.plannedStartDate)+'</td><td>'+pdfDate(t.plannedEndDate)+'</td><td>'+pdfDate(t.actualStartDate)+'</td><td>'+pdfDate(t.actualEndDate)+'</td>'+
       '<td>'+t.taskAgeingDays+'d</td><td>'+t.phaseAgeingDays+'d</td></tr>';
-  }).join('') || '<tr><td colspan="14" style="text-align:center;color:#999">No open tasks</td></tr>';
+  }).join('') || '<tr><td colspan="15" style="text-align:center;color:#999">No open tasks</td></tr>';
 
   var completedRows = d.completedLastMonth.map(function(t){
     return '<tr><td>'+esc(t.resourceName)+'</td><td>'+esc(t.releaseNumber)+'</td><td>'+esc(t.moduleName)+'</td><td>'+esc(t.company)+'</td>'+
-      '<td>'+esc(t.taskNumber)+'</td><td>'+esc(t.phaseCode)+'</td>'+
+      '<td>'+esc(t.taskNumber)+'</td><td>'+esc(t.taskTitle)+'</td><td>'+esc(t.phaseCode)+'</td>'+
       '<td>'+(t.reportedAt?new Date(t.reportedAt).toLocaleDateString('en-IN'):'')+'</td>'+
       '<td>'+pdfDate(t.plannedStartDate)+'</td><td>'+pdfDate(t.plannedEndDate)+'</td><td>'+pdfDate(t.actualStartDate)+'</td><td>'+pdfDate(t.actualEndDate)+'</td>'+
       '<td>'+(t.closedAt?new Date(t.closedAt).toLocaleDateString('en-IN'):'')+'</td>'+
       '<td>'+t.daysToClose+'d</td><td>'+badge(t.isDefault)+'</td></tr>';
-  }).join('') || '<tr><td colspan="14" style="text-align:center;color:#999">No completed tasks</td></tr>';
+  }).join('') || '<tr><td colspan="15" style="text-align:center;color:#999">No completed tasks</td></tr>';
+
+  var allTimeRows = d.allTimeCompleted.map(function(t){
+    return '<tr><td>'+esc(t.resourceName)+'</td><td>'+esc(t.releaseNumber)+'</td><td>'+esc(t.moduleName)+'</td><td>'+esc(t.company)+'</td>'+
+      '<td>'+esc(t.taskNumber)+'</td><td>'+esc(t.taskTitle)+'</td><td>'+esc(t.phaseCode)+'</td>'+
+      '<td>'+(t.reportedAt?new Date(t.reportedAt).toLocaleDateString('en-IN'):'')+'</td>'+
+      '<td>'+pdfDate(t.plannedStartDate)+'</td><td>'+pdfDate(t.plannedEndDate)+'</td><td>'+pdfDate(t.actualStartDate)+'</td><td>'+pdfDate(t.actualEndDate)+'</td>'+
+      '<td>'+(t.closedAt?new Date(t.closedAt).toLocaleDateString('en-IN'):'')+'</td>'+
+      '<td>'+t.daysToClose+'d</td><td>'+badge(t.isDefault)+'</td></tr>';
+  }).join('') || '<tr><td colspan="15" style="text-align:center;color:#999">No completed tasks</td></tr>';
 
   var win = window.open('', '_blank');
   if (!win) { toast('Pop-up blocked — please allow pop-ups to export PDF', true); return; }
@@ -2851,12 +3064,19 @@ function rrExportPDF() {
     '<tr><th class="ageing-hdr">0 Days</th><th class="ageing-hdr">1 to 3 Days</th><th class="ageing-hdr">4 to 20 Days</th><th class="ageing-hdr">&gt;20 Days</th>'+
     '<th class="ageing-hdr">0 Days</th><th class="ageing-hdr">1 to 3 Days</th><th class="ageing-hdr">4 to 20 Days</th><th class="ageing-hdr">&gt;20 Days</th></tr></thead>'+
     '<tbody>'+matrixRows+'</tbody></table>'+
+    '<h2>Resource Bandwidth — Open FSD/Testing/UAT (Week)</h2>'+
+    '<table><thead><tr>'+bwWeekHead+'</tr></thead><tbody>'+bwWeekRows+'</tbody></table>'+
+    '<h2>Resource Bandwidth — Open FSD/Testing/UAT (Month)</h2>'+
+    '<table><thead><tr>'+bwMonthHead+'</tr></thead><tbody>'+bwMonthRows+'</tbody></table>'+
     '<h2>Current In-Hand Tasks</h2>'+
-    '<table><thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Phase</th><th>Status</th><th>Reported On</th><th>Planned Start Date</th><th>Plan Completion Date</th><th>Actual Start Date</th><th>Actual End Date</th><th>Task Ageing</th><th>Phase Ageing</th></tr></thead>'+
+    '<table><thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Task Title</th><th>Phase</th><th>Status</th><th>Reported On</th><th>Planned Start Date</th><th>Plan Completion Date</th><th>Actual Start Date</th><th>Actual End Date</th><th>Task Ageing</th><th>Phase Ageing</th></tr></thead>'+
     '<tbody>'+currentRows+'</tbody></table>'+
     '<h2>Completed — Last 30 Days</h2>'+
-    '<table><thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Phase</th><th>Reported On</th><th>Planned Start Date</th><th>Plan Completion Date</th><th>Actual Start Date</th><th>Actual End Date</th><th>Closed On</th><th>Days to Close</th><th>Status</th></tr></thead>'+
+    '<table><thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Task Title</th><th>Phase</th><th>Reported On</th><th>Planned Start Date</th><th>Plan Completion Date</th><th>Actual Start Date</th><th>Actual End Date</th><th>Closed On</th><th>Days to Close</th><th>Status</th></tr></thead>'+
     '<tbody>'+completedRows+'</tbody></table>'+
+    '<h2>All-Time Completed Tasks</h2>'+
+    '<table><thead><tr><th>Resource</th><th>Release No.</th><th>Module</th><th>Company</th><th>Task No.</th><th>Task Title</th><th>Phase</th><th>Reported On</th><th>Planned Start Date</th><th>Plan Completion Date</th><th>Actual Start Date</th><th>Actual End Date</th><th>Closed On</th><th>Days to Close</th><th>Status</th></tr></thead>'+
+    '<tbody>'+allTimeRows+'</tbody></table>'+
     '</body></html>');
   win.document.close();
 }
@@ -2864,11 +3084,12 @@ function rrExportPDF() {
 function rrExportAllTime() {
   var d = window._rrExportData;
   if (!d) { toast('Load Resource Report first', true); return; }
-  var rows = [['Resource','Release No.','Module','Company','Task No.','Phase','Reported On','Closed On','Days To Close','Status']];
+  function atDate(v) { return v ? new Date(v).toLocaleDateString('en-IN') : ''; }
+  var rows = [['Resource','Release No.','Module','Company','Task No.','Task Title','Phase','Reported On','Planned Start Date','Plan Completion Date','Actual Start Date','Actual End Date','Closed On','Days To Close','Status']];
   d.allTimeCompleted.forEach(function(t){
-    rows.push([t.resourceName, t.releaseNumber||'', t.moduleName||'', t.company||'', t.taskNumber||'', t.phaseCode||'',
-      t.reportedAt ? new Date(t.reportedAt).toLocaleDateString('en-IN') : '',
-      t.closedAt ? new Date(t.closedAt).toLocaleDateString('en-IN') : '', t.daysToClose, t.isDefault ? 'Default' : 'Non-Default']);
+    rows.push([t.resourceName, t.releaseNumber||'', t.moduleName||'', t.company||'', t.taskNumber||'', t.taskTitle||'', t.phaseCode||'',
+      atDate(t.reportedAt), atDate(t.plannedStartDate), atDate(t.plannedEndDate), atDate(t.actualStartDate), atDate(t.actualEndDate),
+      atDate(t.closedAt), t.daysToClose, t.isDefault ? 'Default' : 'Non-Default']);
   });
   downloadCSVData(rows, 'resource_report_alltime_'+new Date().toISOString().slice(0,10)+'.csv');
 }
@@ -3731,11 +3952,13 @@ async function exportSingleCR() {
     ['Field', 'Value'],
     ['Number',           r.releaseNumber || ''],
     ['Title',            r.title || ''],
+    ['Module',           r.moduleName || ''],
     ['State',            r.state || ''],
     ['Priority',         PRIO_MAP[r.priority] || r.priority || ''],
     ['Company',          r.company || ''],
     ['Service',          r.service || ''],
     ['Requested By',     r.requestedBy || ''],
+    ['CR Owner',         r.crOwnerName || ''],
     ['Assignment Group', r.phaseAssignmentGroup || r.assignmentGroup || ''],
     ['Assigned To',      r.assignedTo || ''],
     ['Planned Start',    fmtDate(r.plannedStartDate)],
@@ -4452,8 +4675,8 @@ async function exportMyReleases() {
   const data = await GET('/releases?requestedBy=' + encodeURIComponent(currentUser.fullName) + '&pageSize=200');
   const rows = data?.data || [];
   downloadCSVData([
-    ['Number','Title','State','Priority','Company','Planned Start'],
-    ...rows.map(r => [r.releaseNumber,r.title,r.state,PRIO_MAP[r.priority]||r.priority,r.company||'',fmtDate(r.plannedStartDate)])
+    ['Number','Title','Module','State','Priority','Company','Planned Start'],
+    ...rows.map(r => [r.releaseNumber,r.title,r.moduleName||'',r.state,PRIO_MAP[r.priority]||r.priority,r.company||'',fmtDate(r.plannedStartDate)])
   ], `my_releases_${currentUser.initials}.csv`);
 }
 
@@ -4461,8 +4684,8 @@ async function exportAllReleases() {
   const data = await GET('/releases?pageSize=500');
   const rows = data?.data || [];
   downloadCSVData([
-    ['Number','Title','Requested By','State','Priority','Company','Group','Planned Start'],
-    ...rows.map(r => [r.releaseNumber,r.title,r.requestedBy||'',r.state,PRIO_MAP[r.priority]||r.priority,r.company||'',r.assignmentGroup||'',fmtDate(r.plannedStartDate)])
+    ['Number','Title','Module','Requested By','State','Priority','Company','Group','Planned Start'],
+    ...rows.map(r => [r.releaseNumber,r.title,r.moduleName||'',r.requestedBy||'',r.state,PRIO_MAP[r.priority]||r.priority,r.company||'',r.assignmentGroup||'',fmtDate(r.plannedStartDate)])
   ], 'all_releases.csv');
 }
 
@@ -4473,12 +4696,12 @@ async function printReport() {
   var html = '<h1 style="color:#C8102E;font-family:Arial">Motherson CR Management System</h1>';
   html += '<p style="font-family:Arial;font-size:12px">Group: '+grp+' | State: '+state+' | Total: '+rows.length+' | Generated: '+new Date().toLocaleString('en-IN')+'</p>';
   html += '<table style="border-collapse:collapse;width:100%;font-family:Arial;font-size:12px"><tr>';
-  ['Number','Title','Requested By','State','Priority','Group','Company','Planned Start'].forEach(function(h2){
+  ['Number','Title','Module','Requested By','State','Priority','Group','Company','Planned Start'].forEach(function(h2){
     html += '<th style="padding:6px 10px;border:1px solid #ddd;background:#f5f5f5">'+h2+'</th>';
   });
   html += '</tr>';
   rows.forEach(function(r) {
-    html += '<tr><td style="padding:5px 8px;border:1px solid #ddd">'+r.releaseNumber+'</td><td style="padding:5px 8px;border:1px solid #ddd">'+r.title+'</td><td style="padding:5px 8px;border:1px solid #ddd">'+(r.requestedBy||'—')+'</td><td style="padding:5px 8px;border:1px solid #ddd">'+r.state+'</td><td style="padding:5px 8px;border:1px solid #ddd">'+(PRIO_MAP[r.priority]||r.priority)+'</td><td style="padding:5px 8px;border:1px solid #ddd">'+(r.assignmentGroup||'—')+'</td><td style="padding:5px 8px;border:1px solid #ddd">'+(r.company||'—')+'</td><td style="padding:5px 8px;border:1px solid #ddd">'+fmtDate(r.plannedStartDate)+'</td></tr>';
+    html += '<tr><td style="padding:5px 8px;border:1px solid #ddd">'+r.releaseNumber+'</td><td style="padding:5px 8px;border:1px solid #ddd">'+r.title+'</td><td style="padding:5px 8px;border:1px solid #ddd">'+(r.moduleName||'—')+'</td><td style="padding:5px 8px;border:1px solid #ddd">'+(r.requestedBy||'—')+'</td><td style="padding:5px 8px;border:1px solid #ddd">'+r.state+'</td><td style="padding:5px 8px;border:1px solid #ddd">'+(PRIO_MAP[r.priority]||r.priority)+'</td><td style="padding:5px 8px;border:1px solid #ddd">'+(r.assignmentGroup||'—')+'</td><td style="padding:5px 8px;border:1px solid #ddd">'+(r.company||'—')+'</td><td style="padding:5px 8px;border:1px solid #ddd">'+fmtDate(r.plannedStartDate)+'</td></tr>';
   });
   html += '</table>';
   document.body.innerHTML = html;
@@ -4973,10 +5196,29 @@ function tlBulkExport() {
 // exists. If a CR shouldn't be tracked, delete/cancel the CR itself.
 
 // ── Export ────────────────────────────────────────────────────────────
+// Task/Phase Ageing text mirrors the on-screen grid's own formulas exactly
+// (see the two IIFEs in tlRenderGrid around "Task Ageing"/"Phase Ageing")
+// so the export never drifts from what's shown live in the tool.
+function tlTaskAgeingText(r) {
+  var ag = null;
+  var endStr = r.tftEnd || r.devEnd || r.md50End;
+  if (endStr) {
+    var p = endStr.split('/');
+    if (p.length === 3) { var d = new Date(p[2]+'-'+p[1]+'-'+p[0]); if (!isNaN(d)) ag = Math.round((new Date()-d)/86400000); }
+  } else if (r.reportedOn) {
+    var p2 = r.reportedOn.split('/');
+    if (p2.length === 3) { var d2 = new Date(p2[2]+'-'+p2[1]+'-'+p2[0]); if (!isNaN(d2)) ag = Math.round((new Date()-d2)/86400000); }
+  }
+  return ag === null ? '' : (ag>0?'+':'')+ag+' days';
+}
+function tlPhaseAgeingText(r) {
+  var ag = r.phaseAgeingDays;
+  return (ag === null || ag === undefined) ? '' : ag+' days';
+}
 function tlExportRows(rows, fname) {
   var hdr = ['Reported On','Requester','CEMLI','ServiceNow ID','Ticket No','SmartSheet',
              'Project','Module','Process','Task Title','Owner','CR Owner','Status','Stage',
-             'Pending With','Delay Reason','Comments',
+             'Pending With','Task Ageing','Phase Ageing','Delay Reason','Comments',
              'RD Approval Dt.','MD50 St','MD50 End','MD50 App.By','MD50 App. On',
              'Dev. St','Dev. End','TFT St','TFT End','UAT Closed On',
              '1st Approved On','2nd Approved On','3rd Approved On',
@@ -4985,7 +5227,7 @@ function tlExportRows(rows, fname) {
     return [
       r.reportedOn||'',r.requester||'',r.cemli||'',r.serviceNowId||'',r.ticketNo||'',r.smartSheet||'',
       r.project||'',r.module||'',r.process||'',r.taskTitle||'',r.owner||'',r.crOwner||'',
-      r.status||'',r.stage||'',r.pendingWith||'',r.delayReason||'',r.comments||'',
+      r.status||'',r.stage||'',r.pendingWith||'',tlTaskAgeingText(r),tlPhaseAgeingText(r),r.delayReason||'',r.comments||'',
       r.rdApprovalDt||'',r.md50St||'',r.md50End||'',r.md50AppBy||'',r.md50AppOn||'',
       r.devSt||'',r.devEnd||'',r.tftSt||'',r.tftEnd||'',r.uatClosedOn||'',
       r.approved1On||'',r.approved2On||'',r.approved3On||'',
@@ -6307,13 +6549,13 @@ async function downloadCRHistory(){
   var PRIO={'1':'1-Critical','2':'2-High','3':'3-Moderate','4':'4-Low'};
   var rows=[];
   rows.push(['=== CR OVERVIEW ===','']);
-  [['CR Number',rel.releaseNumber],['Title',rel.title],['State',rel.state],['Priority',PRIO[rel.priority]||rel.priority],['Requested By',rel.requestedBy],['Assigned To',rel.assignedTo],['Company',rel.company],['Planned Start',fmtDate(rel.plannedStartDate)],['Target End',fmtDate(rel.targetEndDate)],['Created On',rel.createdAt?new Date(rel.createdAt).toLocaleString('en-IN'):''],['Summary',rel.summary]].forEach(function(p){rows.push(p);});
+  [['CR Number',rel.releaseNumber],['Title',rel.title],['Module',rel.moduleName],['State',rel.state],['Priority',PRIO[rel.priority]||rel.priority],['Requested By',rel.requestedBy],['CR Owner',rel.crOwnerName],['Assigned To',rel.assignedTo],['Company',rel.company],['Planned Start',fmtDate(rel.plannedStartDate)],['Target End',fmtDate(rel.targetEndDate)],['Created On',rel.createdAt?new Date(rel.createdAt).toLocaleString('en-IN'):''],['Summary',rel.summary]].forEach(function(p){rows.push(p);});
   rows.push(['']);
   if(rel.reasonOfChange||rel.costSaving){rows.push(['=== RD PHASE DETAILS ===','']);[['Reason of Change',rel.reasonOfChange],['Business Benefits (Process)',rel.businessBenefitsProcess],['Business Benefits (Qualitative)',rel.businessBenefitsQualitative],['Cost Saving',rel.costSaving],['Manpower Saving',rel.manpowerSaving]].forEach(function(p){if(p[1])rows.push(p);});rows.push(['']);}
   rows.push(['=== STATE CHANGE HISTORY ===','','','','']);rows.push(['#','Action','From State','To State','Changed By','Date & Time']);
   hist.forEach(function(h,i){rows.push([i+1,h.action,h.fromState||'(Created)',h.toState,h.changedBy,h.changedAt?new Date(h.changedAt).toLocaleString('en-IN'):'']);});rows.push(['']);
   if(appr.length){rows.push(['=== APPROVAL TRAIL ===','','','','','']);rows.push(['Phase','Level','Approver','Status','Comments','Actioned On']);appr.forEach(function(a){rows.push([a.phaseCode,'L'+a.levelOrder,a.approverName,a.status,a.comments||'',a.actionedAt?new Date(a.actionedAt).toLocaleString('en-IN'):'Pending']);});rows.push(['']);}
-  if(tasks.length){rows.push(['=== SUB-TASKS ===','','','','','','','','','']);rows.push(['Task #','Phase','Description','Assigned To','Group','Status','Plan Start','Plan End','Actual Start','Closed On']);tasks.forEach(function(t){rows.push([t.taskNumber,t.phaseCode,t.shortDescription,t.assignedTo,t.groupName,t.state,fmtDate(t.plannedStartDate),fmtDate(t.plannedEndDate),fmtDate(t.actualStartDate),t.closedAt?new Date(t.closedAt).toLocaleString('en-IN'):(fmtDate(t.actualEndDate)||'')]);});rows.push(['']);}
+  if(tasks.length){rows.push(['=== SUB-TASKS ===','','','','','','','','','','']);rows.push(['Task #','Phase','Description','Assigned To','Group','Status','Plan Start','Plan End','Actual Start','Actual End','Closed On']);tasks.forEach(function(t){rows.push([t.taskNumber,t.phaseCode,t.shortDescription,t.assignedTo,t.groupName,t.state,fmtDate(t.plannedStartDate),fmtDate(t.plannedEndDate),fmtDate(t.actualStartDate),fmtDate(t.actualEndDate),t.closedAt?new Date(t.closedAt).toLocaleString('en-IN'):'']);});rows.push(['']);}
   if(coms.length){rows.push(['=== COMMENTS ===','','']);rows.push(['Author','Date & Time','Comment']);coms.forEach(function(c){rows.push([c.author,c.createdAt?new Date(c.createdAt).toLocaleString('en-IN'):'',c.text]);});}
   if(typeof XLSX==='undefined'){await new Promise(function(resolve,reject){var s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';s.onload=resolve;s.onerror=reject;document.head.appendChild(s);});}
   var wb=XLSX.utils.book_new();
@@ -6321,7 +6563,7 @@ async function downloadCRHistory(){
   var wsO=XLSX.utils.aoa_to_sheet(rows);wsO['!cols']=[{wch:30},{wch:60}];XLSX.utils.book_append_sheet(wb,wsO,'CR Overview');
   var wsH=makeWS(['#','Action','From','To','Changed By','Date'],hist.map(function(h,i){return [i+1,h.action,h.fromState||'(Created)',h.toState,h.changedBy,h.changedAt?new Date(h.changedAt).toLocaleString('en-IN'):''];}));wsH['!cols']=[{wch:5},{wch:14},{wch:28},{wch:28},{wch:20},{wch:22}];XLSX.utils.book_append_sheet(wb,wsH,'State History');
   if(appr.length){var wsA=makeWS(['Phase','Level','Approver','Status','Comments','Actioned On'],appr.map(function(a){return [a.phaseCode,'L'+a.levelOrder,a.approverName,a.status,a.comments||'',a.actionedAt?new Date(a.actionedAt).toLocaleString('en-IN'):'Pending'];}));XLSX.utils.book_append_sheet(wb,wsA,'Approvals');}
-  if(tasks.length){var wsT=makeWS(['Task #','Phase','Description','Assigned To','Status','Plan Start','Plan End','Actual Start','Closed On'],tasks.map(function(t){return [t.taskNumber,t.phaseCode,t.shortDescription,t.assignedTo,t.state,fmtDate(t.plannedStartDate),fmtDate(t.plannedEndDate),fmtDate(t.actualStartDate),t.closedAt?new Date(t.closedAt).toLocaleString('en-IN'):(fmtDate(t.actualEndDate)||'')];}));XLSX.utils.book_append_sheet(wb,wsT,'Sub-Tasks');}
+  if(tasks.length){var wsT=makeWS(['Task #','Phase','Description','Assigned To','Status','Plan Start','Plan End','Actual Start','Actual End','Closed On'],tasks.map(function(t){return [t.taskNumber,t.phaseCode,t.shortDescription,t.assignedTo,t.state,fmtDate(t.plannedStartDate),fmtDate(t.plannedEndDate),fmtDate(t.actualStartDate),fmtDate(t.actualEndDate),t.closedAt?new Date(t.closedAt).toLocaleString('en-IN'):''];}));XLSX.utils.book_append_sheet(wb,wsT,'Sub-Tasks');}
   if(coms.length){var wsC=makeWS(['Author','Date','Comment'],coms.map(function(c){return [c.author,c.createdAt?new Date(c.createdAt).toLocaleString('en-IN'):'',c.text];}));XLSX.utils.book_append_sheet(wb,wsC,'Comments');}
   try{var fname=crLabel+'_History_'+new Date().toISOString().slice(0,10)+'.xlsx';XLSX.writeFile(wb,fname);toast('Downloaded: '+fname,false,'green');}catch(e){toast('Download failed: '+e.message,true);}
 }

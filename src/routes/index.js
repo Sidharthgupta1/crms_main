@@ -7,6 +7,9 @@ const adminCtrl  = require('../controllers/adminController');
 // ── Auth (public) ─────────────────────────────────────────────────────
 router.use('/auth', require('./auth'));
 
+// ── Email one-click actions (public — the signed token is the credential) ──
+router.use('/email-actions', require('./emailActions'));
+
 // ── All routes below require valid JWT ───────────────────────────────
 router.use(verifyToken);
 

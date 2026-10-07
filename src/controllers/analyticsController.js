@@ -113,20 +113,22 @@ async function getResourceReport(req, res, next) {
 
     const [currentRows, completedRows, allTimeRows] = await Promise.all([
       db.query(
-        "SELECT rt.task_id,rt.task_number,rt.phase_code,rt.state,rt.created_at,"+
+        "SELECT rt.task_id,rt.task_number,rt.short_description,rt.phase_code,rt.state,rt.created_at,"+
         "rt.planned_start_date,rt.planned_end_date,rt.actual_start_date,rt.actual_end_date,"+
         "rt.assigned_to,u.full_name AS resource_name,"+
         "r.release_id,r.release_number,r.title AS release_title,r.company,m.module_name,"+
+        "u_req.full_name AS requested_by_name,"+
         "(SELECT MAX(h.changed_at) FROM crms_release_history h WHERE h.release_id=r.release_id) AS phase_started_at "+
         "FROM crms_release_tasks rt "+
         "JOIN crms_users u ON u.user_id=rt.assigned_to "+
         "JOIN crms_releases r ON r.release_id=rt.release_id AND r.is_deleted=0 "+
         "LEFT JOIN crms_modules m ON m.module_id=r.module_id "+
+        "LEFT JOIN crms_users u_req ON u_req.user_id=r.requested_by "+
         "WHERE rt.assigned_to IS NOT NULL AND rt.state<>'Closed'"+extraWhere+
         " ORDER BY rt.created_at DESC", {}
       ),
       db.query(
-        "SELECT rt.task_id,rt.task_number,rt.phase_code,rt.created_at,rt.closed_at,"+
+        "SELECT rt.task_id,rt.task_number,rt.short_description,rt.phase_code,rt.created_at,rt.closed_at,"+
         "rt.planned_start_date,rt.planned_end_date,rt.actual_start_date,rt.actual_end_date,"+
         "rt.assigned_to,u.full_name AS resource_name,"+
         "r.release_id,r.release_number,r.title AS release_title,r.company,m.module_name "+
@@ -140,7 +142,7 @@ async function getResourceReport(req, res, next) {
       // Full all-time-completed list (not just a count) so the report can
       // list/export/link every closed sub-task ever, per resource.
       db.query(
-        "SELECT rt.task_id,rt.task_number,rt.phase_code,rt.created_at,rt.closed_at,"+
+        "SELECT rt.task_id,rt.task_number,rt.short_description,rt.phase_code,rt.created_at,rt.closed_at,"+
         "rt.planned_start_date,rt.planned_end_date,rt.actual_start_date,rt.actual_end_date,"+
         "rt.assigned_to,u.full_name AS resource_name,"+
         "r.release_id,r.release_number,r.title AS release_title,r.company,m.module_name "+
@@ -173,10 +175,10 @@ async function getResourceReport(req, res, next) {
       const plannedEndDate = r.PLANNED_END_DATE || null;
       const openDelayDays = plannedEndDate ? dayDiff(new Date(), plannedEndDate) : null;
       return {
-        taskId: r.TASK_ID, taskNumber: r.TASK_NUMBER, phaseCode: r.PHASE_CODE, state: r.STATE,
+        taskId: r.TASK_ID, taskNumber: r.TASK_NUMBER, taskTitle: r.SHORT_DESCRIPTION||'', phaseCode: r.PHASE_CODE, state: r.STATE,
         resourceUserId: num(r.ASSIGNED_TO), resourceName: r.RESOURCE_NAME,
         releaseId: r.RELEASE_ID, releaseNumber: r.RELEASE_NUMBER, releaseTitle: r.RELEASE_TITLE,
-        company: r.COMPANY||'', moduleName: r.MODULE_NAME||'',
+        company: r.COMPANY||'', moduleName: r.MODULE_NAME||'', requestedBy: r.REQUESTED_BY_NAME||'',
         reportedAt: reportedAt,
         taskAgeingDays: dayDiff(new Date(), reportedAt),
         phaseAgeingDays: dayDiff(new Date(), phaseStartedAt),
@@ -193,7 +195,7 @@ async function getResourceReport(req, res, next) {
       const plannedEndDate = r.PLANNED_END_DATE || null;
       const closedDelayDays = plannedEndDate ? dayDiff(r.CLOSED_AT, plannedEndDate) : null;
       return {
-        taskId: r.TASK_ID, taskNumber: r.TASK_NUMBER, phaseCode: r.PHASE_CODE,
+        taskId: r.TASK_ID, taskNumber: r.TASK_NUMBER, taskTitle: r.SHORT_DESCRIPTION||'', phaseCode: r.PHASE_CODE,
         resourceUserId: num(r.ASSIGNED_TO), resourceName: r.RESOURCE_NAME,
         releaseId: r.RELEASE_ID, releaseNumber: r.RELEASE_NUMBER, releaseTitle: r.RELEASE_TITLE,
         company: r.COMPANY||'', moduleName: r.MODULE_NAME||'',
@@ -246,4 +248,149 @@ async function getResourceReport(req, res, next) {
   } catch(err) { next(err); }
 }
 
-module.exports = { getSummary, getSubtaskAssignees, getResourceReport };
+// GET /analytics/resource-bandwidth
+// Projected workload per resource, bucketed by week and by month, counting
+// only OPEN sub-tasks (never closed — bandwidth is about current/future
+// load) in FSD/TESTING/UAT phases (the business-decided scope — these are
+// the phases where a resource's calendar time is actually committed; RD/DEV/
+// DEPLOYMENT etc. are excluded on purpose). A task's [plannedStartDate,
+// plannedEndDate] range "occupies" every bucket it overlaps. Tasks with no
+// planned_start_date can't be placed on a timeline and are excluded; a task
+// with a start but no end is treated as occupying just its start day (not
+// projected open-endedly into every future bucket).
+const BANDWIDTH_PHASES = ['FSD', 'TESTING', 'UAT'];
+const BANDWIDTH_WEEK_BUCKETS = 4;   // this week + 3 more
+const BANDWIDTH_MONTH_BUCKETS = 3;  // this month + 2 more
+
+function startOfWeek(d) {
+  const day = d.getDay(); // 0=Sun..6=Sat
+  const diff = (day === 0 ? -6 : 1) - day; // shift back to Monday
+  const monday = new Date(d);
+  monday.setDate(d.getDate() + diff);
+  monday.setHours(0, 0, 0, 0);
+  return monday;
+}
+function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
+function fmtShort(d) { return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }); }
+
+function buildWeekBuckets(today) {
+  const buckets = [];
+  const mon0 = startOfWeek(today);
+  const labels = ['This week', 'Next week'];
+  for (let i = 0; i < BANDWIDTH_WEEK_BUCKETS; i++) {
+    const from = addDays(mon0, i * 7);
+    const to = addDays(from, 6);
+    to.setHours(23, 59, 59, 999);
+    buckets.push({
+      label: labels[i] || ('Week +' + i),
+      range: fmtShort(from) + '-' + fmtShort(to),
+      from: from, to: to,
+    });
+  }
+  return buckets;
+}
+function buildMonthBuckets(today) {
+  const buckets = [];
+  const labels = ['This month', 'Next month'];
+  for (let i = 0; i < BANDWIDTH_MONTH_BUCKETS; i++) {
+    const from = new Date(today.getFullYear(), today.getMonth() + i, 1);
+    const to = new Date(today.getFullYear(), today.getMonth() + i + 1, 0, 23, 59, 59, 999);
+    buckets.push({
+      label: labels[i] || ('Month +' + i),
+      range: from.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }),
+      from: from, to: to,
+    });
+  }
+  return buckets;
+}
+function overlaps(taskStart, taskEnd, bucketFrom, bucketTo) {
+  const s = taskStart;
+  const e = taskEnd || taskStart; // no end date — treat as a single-day task
+  return s <= bucketTo && e >= bucketFrom;
+}
+
+function bwDayDiff(a, b) { return Math.floor((new Date(a) - new Date(b)) / 86400000); }
+
+async function getResourceBandwidth(req, res, next) {
+  try {
+    const phaseList = BANDWIDTH_PHASES.map(function(p) { return "'" + p + "'"; }).join(',');
+    // Same moduleId/company filtering as getResourceReport, so the Bandwidth
+    // section respects the Resource Report page's shared filter row instead
+    // of always showing every resource org-wide.
+    const moduleId = req.query.moduleId ? num(req.query.moduleId) : null;
+    const company  = req.query.company ? safe(req.query.company) : null;
+    const extraWhere = (moduleId ? " AND r.module_id="+moduleId : '') + (company ? " AND r.company='"+company+"'" : '');
+    // Same field set as getResourceReport's currentTasks (state, module,
+    // company, reported/actual dates, ageing) so the frontend can render
+    // the week/month drill-down table with the exact same row renderer it
+    // already uses for the "click a resource name" drill-down.
+    const rows = await db.query(
+      "SELECT rt.task_id,rt.task_number,rt.short_description,rt.phase_code,rt.state,rt.created_at,"+
+      "rt.planned_start_date,rt.planned_end_date,rt.actual_start_date,rt.actual_end_date,"+
+      "rt.assigned_to,u.full_name AS resource_name,"+
+      "r.release_id,r.release_number,r.company,m.module_name,"+
+      "u_req.full_name AS requested_by_name,"+
+      "(SELECT MAX(h.changed_at) FROM crms_release_history h WHERE h.release_id=r.release_id) AS phase_started_at "+
+      "FROM crms_release_tasks rt "+
+      "JOIN crms_users u ON u.user_id=rt.assigned_to "+
+      "JOIN crms_releases r ON r.release_id=rt.release_id AND r.is_deleted=0 "+
+      "LEFT JOIN crms_modules m ON m.module_id=r.module_id "+
+      "LEFT JOIN crms_users u_req ON u_req.user_id=r.requested_by "+
+      "WHERE rt.assigned_to IS NOT NULL AND rt.state<>'Closed' "+
+      "AND rt.phase_code IN ("+phaseList+") AND rt.planned_start_date IS NOT NULL"+extraWhere+" "+
+      "ORDER BY u.full_name, rt.planned_start_date", {}
+    );
+
+    const tasks = rows.map(function(r) {
+      const reportedAt = r.CREATED_AT;
+      const phaseStartedAt = r.PHASE_STARTED_AT || reportedAt;
+      return {
+        taskId: r.TASK_ID, taskNumber: r.TASK_NUMBER, taskTitle: r.SHORT_DESCRIPTION || '',
+        phaseCode: r.PHASE_CODE, state: r.STATE,
+        resourceUserId: num(r.ASSIGNED_TO), resourceName: r.RESOURCE_NAME,
+        releaseId: r.RELEASE_ID, releaseNumber: r.RELEASE_NUMBER,
+        company: r.COMPANY || '', moduleName: r.MODULE_NAME || '', requestedBy: r.REQUESTED_BY_NAME || '',
+        reportedAt: reportedAt,
+        taskAgeingDays: bwDayDiff(new Date(), reportedAt),
+        phaseAgeingDays: bwDayDiff(new Date(), phaseStartedAt),
+        plannedStartDate: r.PLANNED_START_DATE, plannedEndDate: r.PLANNED_END_DATE || null,
+        actualStartDate: r.ACTUAL_START_DATE || null, actualEndDate: r.ACTUAL_END_DATE || null,
+      };
+    });
+
+    const today = new Date();
+    const weekBuckets = buildWeekBuckets(today);
+    const monthBuckets = buildMonthBuckets(today);
+
+    const byResource = {};
+    function ensure(uid, name) {
+      if (!byResource[uid]) byResource[uid] = {
+        userId: uid, name: name,
+        weekCounts: new Array(weekBuckets.length).fill(0),
+        monthCounts: new Array(monthBuckets.length).fill(0),
+      };
+      return byResource[uid];
+    }
+
+    tasks.forEach(function(t) {
+      const s = new Date(t.plannedStartDate);
+      const e = t.plannedEndDate ? new Date(t.plannedEndDate) : null;
+      const res_ = ensure(t.resourceUserId, t.resourceName);
+      weekBuckets.forEach(function(b, i) { if (overlaps(s, e, b.from, b.to)) res_.weekCounts[i]++; });
+      monthBuckets.forEach(function(b, i) { if (overlaps(s, e, b.from, b.to)) res_.monthCounts[i]++; });
+    });
+
+    return res.json({
+      phases: BANDWIDTH_PHASES,
+      weekBuckets: weekBuckets.map(function(b) { return { label: b.label, range: b.range, from: b.from, to: b.to }; }),
+      monthBuckets: monthBuckets.map(function(b) { return { label: b.label, range: b.range, from: b.from, to: b.to }; }),
+      resources: Object.values(byResource).sort(function(a, b) { return a.name.localeCompare(b.name); }),
+      tasks: tasks,
+    });
+  } catch (err) { next(err); }
+}
+
+module.exports = {
+  getSummary, getSubtaskAssignees, getResourceReport, getResourceBandwidth,
+  BANDWIDTH_PHASES, buildWeekBuckets, buildMonthBuckets, overlaps,
+};

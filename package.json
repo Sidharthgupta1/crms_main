@@ -23,6 +23,7 @@
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
+    "nodemailer": "^10.0.12",
     "oracledb": "^6.4.0",
     "winston": "^3.13.0",
     "winston-daily-rotate-file": "^5.0.0"

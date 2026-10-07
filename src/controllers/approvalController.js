@@ -361,14 +361,15 @@ async function approve(req, res, next) {
     );
 
     // ── Email: Notify approval completed ──────────────────────────────
+    // sendApprovalCompleted's own isFinal branch already covers "Phase
+    // Completed" when !hasNext — a separate sendPhaseCompleted() call used
+    // to fire right after this unconditionally, re-emailing the same two
+    // people the same thing a second time. Removed as a straight duplicate.
     setImmediate(async () => {
       try {
         const emailSvc = require('../services/emailService');
         await emailSvc.sendApprovalCompleted(rid, phaseCode, curLevel, uid, !hasNext,
           hasNext ? nextApprovers.map(a => num(a.APPROVER_USER_ID)) : []);
-        if (!hasNext) {
-          await emailSvc.sendPhaseCompleted(rid, phaseCode);
-        }
       } catch (e) { logger.warn('[Email] approve notification', { e: e.message }); }
     });
 

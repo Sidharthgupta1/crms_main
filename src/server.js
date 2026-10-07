@@ -140,6 +140,21 @@ async function connectWithRetry() {
     } catch(e) {
       logger.warn('Cache warm-up skipped:', e.message);
     }
+
+    // Start the defaulted-task email checker now that the DB is up
+    try {
+      require('./services/defaultedTaskChecker').start();
+    } catch(e) {
+      logger.warn('DefaultedTaskChecker failed to start:', e.message);
+    }
+
+    // Start the resource-bandwidth digest checker (no-op until
+    // BANDWIDTH_DIGEST_RECIPIENTS is set in .env)
+    try {
+      require('./services/bandwidthDigestChecker').start();
+    } catch(e) {
+      logger.warn('BandwidthDigestChecker failed to start:', e.message);
+    }
   } catch(err) {
     dbReady = false;
 
