@@ -846,6 +846,13 @@ async function advanceState(req, res, next) {
     const approvalPhases = { 'RD Phase':'RD', 'FSD Phase':'FSD', 'Deployment Phase':'DEPLOYMENT' };
     if (approvalPhases[cur]) {
       const phaseCode = approvalPhases[cur];
+      // CR Owner gate — previously enforced only in the frontend (before
+      // opening the approval modal), so any other path to this endpoint
+      // (a different button, a stale client-side release object, a direct
+      // API call) could submit FSD for approval with no CR Owner set.
+      if (phaseCode === 'FSD' && (!release.CR_OWNER_USER_ID || num(release.CR_OWNER_USER_ID) === '0')) {
+        return res.status(400).json({ error: 'CR Owner must be set before submitting FSD Phase for approval.' });
+      }
       // Sub-task gate — NOT required for RD phase, required for FSD and Deployment
       if (phaseCode !== 'RD') {
         const anyTask = await db.queryOne(

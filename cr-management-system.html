@@ -803,7 +803,7 @@ select.tl-cell {
           </div>
           <div>
             <div style="font-size:12px;font-weight:700;color:var(--grey-600);margin-bottom:10px;text-transform:uppercase;letter-spacing:.4px">Assigned to Me</div>
-            <div class="table-wrap"><table><thead><tr><th>Task #</th><th>CR</th><th>Phase</th><th>State</th></tr></thead><tbody id="dash-tasks-table"><tr class="empty-row"><td colspan="4">No tasks</td></tr></tbody></table></div>
+            <div class="table-wrap"><table><thead><tr><th>Task #</th><th>Task Title</th><th>CR</th><th>Phase</th><th>State</th></tr></thead><tbody id="dash-tasks-table"><tr class="empty-row"><td colspan="5">No tasks</td></tr></tbody></table></div>
           </div>
         </div>
 
@@ -2234,22 +2234,23 @@ async function renderDashboard() {
   // Merge legacy tasks + phase tasks into Assigned to Me table
   var allMyTasks = [];
   (myTasksData || []).forEach(function(t) {
-    allMyTasks.push({ num: t.taskNumber, releaseId: t.releaseId, releaseNum: t.releaseNumber, phase: t.phase || t.taskType || '—', state: t.state });
+    allMyTasks.push({ num: t.taskNumber, title: t.shortDescription || '', releaseId: t.releaseId, releaseNum: t.releaseNumber, phase: t.phase || t.taskType || '—', state: t.state });
   });
   (myPhaseTasks2 || []).forEach(function(t) {
-    allMyTasks.push({ num: t.taskNumber, releaseId: t.releaseId, releaseNum: t.releaseNumber, phase: t.phaseCode, state: t.state });
+    allMyTasks.push({ num: t.taskNumber, title: t.shortDescription || '', releaseId: t.releaseId, releaseNum: t.releaseNumber, phase: t.phaseCode, state: t.state });
   });
   const ttbody = document.getElementById('dash-tasks-table');
   ttbody.innerHTML = allMyTasks.length
     ? allMyTasks.slice(0, 8).map(function(t) {
         return '<tr>' +
           '<td><span style="font-family:monospace;font-size:12px;font-weight:700;color:var(--red)">' + t.num + '</span></td>' +
+          '<td>' + (t.title || '—') + '</td>' +
           '<td><a class="cr-link" onclick="openDetail(' + t.releaseId + ')">' + t.releaseNum + '</a></td>' +
           '<td><span style="font-size:11px;font-weight:600;padding:2px 6px;border-radius:8px;background:#e3f2fd;color:#1565c0">' + t.phase + '</span></td>' +
           '<td>' + stateBadge(t.state) + '</td>' +
           '</tr>';
       }).join('')
-    : '<tr class="empty-row"><td colspan="4">No tasks assigned to you</td></tr>';
+    : '<tr class="empty-row"><td colspan="5">No tasks assigned to you</td></tr>';
 
   // Load pending approvals panel
   renderPendingApprovalsPanel();
